@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1F7A55">
+<meta name="description" content="Kleines Taschengeld-Sparkonto für Kinder – läuft offline im Browser.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Sparkonto">
+<title>Sparkonto</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700&family=Nunito+Sans:wght@400;600;700;800&display=swap">
+<style>
+  :root {
+    --bg:#F2F7F2; --surface:#FFFFFF; --surface-2:#E9F1E8; --border:rgba(23,40,29,0.10);
+    --text:#17281D; --muted:#5E7267;
+    --accent:#1F7A55; --accent-strong:#166245; --accent-soft:#DFF0E5;
+    --gold:#C9962E; --gold-soft:#FBF1DC;
+    --danger:#BC5334; --danger-soft:#FAEAE1;
+    --shadow: 0 1px 2px rgba(23,40,29,0.06), 0 10px 24px rgba(23,40,29,0.08);
+    --radius: 18px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#0E1712; --surface:#16211B; --surface-2:#1C2A22; --border:rgba(230,240,232,0.12);
+      --text:#E7F2EA; --muted:#8FA598;
+      --accent:#4FBF8B; --accent-strong:#6ED4A4; --accent-soft:#1B3226;
+      --gold:#E3B65C; --gold-soft:#2C2314;
+      --danger:#E2896A; --danger-soft:#33201A;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 10px 24px rgba(0,0,0,0.35);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#0E1712; --surface:#16211B; --surface-2:#1C2A22; --border:rgba(230,240,232,0.12);
+    --text:#E7F2EA; --muted:#8FA598;
+    --accent:#4FBF8B; --accent-strong:#6ED4A4; --accent-soft:#1B3226;
+    --gold:#E3B65C; --gold-soft:#2C2314;
+    --danger:#E2896A; --danger-soft:#33201A;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 10px 24px rgba(0,0,0,0.35);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: "Nunito Sans", system-ui, sans-serif; }
+  h1,h2,h3 { font-family: "Baloo 2", "Nunito Sans", system-ui, sans-serif; margin: 0; text-wrap: balance; }
+  button, input, select { font-family: inherit; color: inherit; }
+  button { cursor: pointer; }
+
+  .app { max-width: 520px; margin: 0 auto; min-height: 100%; display: flex; flex-direction: column; }
+
+  .topbar {
+    position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+    background: var(--bg); padding: 18px 20px 10px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .topbar .mark { color: var(--accent); flex-shrink: 0; }
+  .topbar h1 { font-size: 20px; font-weight: 700; color: var(--text); }
+
+  main { flex: 1; padding: 4px 20px 24px; }
+  main.with-tabbar { padding-bottom: 100px; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 20px;
+  }
+  .stack { display: flex; flex-direction: column; gap: 14px; }
+  .muted { color: var(--muted); }
+  .field-label { font-size: 12px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+
+  input[type="number"], input[type="date"], select {
+    width: 100%; min-height: 48px; padding: 10px 14px; border-radius: 12px;
+    border: 1.5px solid var(--border); background: var(--surface-2); color: var(--text);
+    font-size: 16px; font-weight: 600;
+  }
+  input[type="number"]:focus, input[type="date"]:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .btn {
+    min-height: 48px; border-radius: 12px; border: none; padding: 0 18px;
+    font-size: 15px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:disabled { opacity: .45; }
+  .btn-ghost { background: var(--surface-2); color: var(--text); }
+  .btn-danger { background: var(--danger-soft); color: var(--danger); }
+  .btn-danger-solid { background: var(--danger); color: #fff; }
+  .btn-block { width: 100%; }
+
+  /* --- Onboarding --- */
+  #onboarding-view .hero { text-align: center; padding: 22px 6px 8px; }
+  #onboarding-view .hero .mark { color: var(--accent); }
+  #onboarding-view .hero h2 { font-size: 24px; margin-top: 10px; }
+  #onboarding-view .hero p { margin-top: 6px; }
+
+  /* --- Balance view --- */
+  .balance-hero { text-align: center; padding: 40px 12px 28px; }
+  .balance-label { font-size: 13px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .balance-amount { font-family: "Baloo 2", sans-serif; font-weight: 700; font-size: clamp(44px, 14vw, 68px); line-height: 1.05; margin-top: 10px; font-variant-numeric: tabular-nums; }
+  .balance-since { margin-top: 8px; font-size: 14px; }
+  .rule-pill {
+    display: inline-flex; align-items: center; gap: 6px; margin-top: 18px; padding: 8px 16px;
+    background: var(--accent-soft); color: var(--accent-strong); border-radius: 999px; font-weight: 700; font-size: 13.5px;
+  }
+  .next-booking { margin-top: 14px; font-size: 13.5px; color: var(--muted); }
+
+  /* --- Add view --- */
+  .direction-row { display: flex; gap: 10px; }
+  .direction-btn {
+    flex: 1; min-height: 52px; border-radius: 14px; border: 1.5px solid var(--border);
+    background: var(--surface-2); font-weight: 800; font-size: 15px; color: var(--muted);
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .direction-btn.active.deposit { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); }
+  .direction-btn.active.withdraw { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
+  .amount-input-wrap { text-align: center; }
+  #add-amount-input {
+    text-align: center; font-family: "Baloo 2", sans-serif; font-size: 40px; font-weight: 700;
+    min-height: 72px; border-radius: 16px;
+  }
+  .toast { text-align: center; font-size: 13.5px; font-weight: 700; color: var(--accent); min-height: 18px; }
+
+  /* --- History view --- */
+  .chart-card { padding: 16px 16px 12px; }
+  .chart-empty { text-align: center; padding: 24px 8px; font-size: 14px; }
+  .chart-label { font-size: 9px; fill: var(--muted); font-family: "Nunito Sans", sans-serif; }
+  .tx-list { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+  .tx-row {
+    display: flex; align-items: center; gap: 12px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 12px 14px;
+  }
+  .tx-icon {
+    width: 38px; height: 38px; border-radius: 10px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .tx-icon.pos { background: var(--accent-soft); color: var(--accent-strong); }
+  .tx-icon.neg { background: var(--danger-soft); color: var(--danger); }
+  .tx-icon.gold { background: var(--gold-soft); color: var(--gold); }
+  .tx-body { flex: 1; min-width: 0; }
+  .tx-type { font-weight: 700; font-size: 14.5px; }
+  .tx-date { font-size: 12.5px; color: var(--muted); margin-top: 1px; }
+  .tx-amount { font-weight: 800; font-variant-numeric: tabular-nums; font-size: 15px; white-space: nowrap; }
+  .tx-amount.pos { color: var(--accent-strong); }
+  .tx-amount.neg { color: var(--danger); }
+
+  /* --- PIN pad --- */
+  .pin-title { text-align: center; font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+  .pin-sub { text-align: center; font-size: 13.5px; margin-bottom: 18px; }
+  .pin-dots { display: flex; justify-content: center; gap: 14px; margin-bottom: 8px; }
+  .pin-dot { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--muted); }
+  .pin-dot.filled { background: var(--accent); border-color: var(--accent); }
+  .pin-error { text-align: center; color: var(--danger); font-size: 13px; font-weight: 700; min-height: 18px; margin-bottom: 6px; }
+  .pin-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; max-width: 280px; margin: 10px auto 0; }
+  .pin-key {
+    min-height: 60px; border-radius: 16px; border: 1px solid var(--border); background: var(--surface-2);
+    font-size: 22px; font-weight: 700; color: var(--text);
+  }
+  .pin-key.empty { visibility: hidden; }
+
+  /* --- Settings --- */
+  .settings-section-title { font-size: 15px; font-weight: 800; margin-top: 4px; }
+  .danger-box { border: 1.5px solid var(--danger); border-radius: 14px; padding: 16px; background: var(--danger-soft); }
+  .confirm-row { display: flex; gap: 10px; margin-top: 12px; }
+  .confirm-row .btn { flex: 1; }
+  .footnote { font-size: 12px; color: var(--muted); text-align: center; margin-top: 4px; }
+
+  /* --- Tab bar --- */
+  .tabbar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    background: var(--surface); border-top: 1px solid var(--border);
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+    display: flex; justify-content: center;
+  }
+  .tabbar-inner { display: flex; gap: 4px; max-width: 520px; width: 100%; }
+  .tab {
+    flex: 1; background: none; border: none; display: flex; flex-direction: column; align-items: center; gap: 4px;
+    padding: 6px 4px; border-radius: 12px; color: var(--muted); font-size: 11px; font-weight: 700;
+  }
+  .tab.active { color: var(--accent); }
+  .tab svg { width: 22px; height: 22px; }
+
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <section id="onboarding-view" class="stack" hidden>
+    <div class="hero">
+      <svg class="mark" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 12l2 2 4-4"/></svg>
+      <h2>Willkommen bei deinem Sparkonto</h2>
+      <p class="muted">Lass uns kurz einrichten, wie dein Guthaben wächst.</p>
+    </div>
+    <div class="card stack">
+      <div>
+        <div class="field-label">Startguthaben</div>
+        <input type="number" id="ob-balance" min="0" step="1" value="12">
+      </div>
+      <div>
+        <div class="field-label">Startdatum</div>
+        <input type="date" id="ob-date">
+      </div>
+      <div>
+        <div class="field-label">Wöchentlicher Betrag (Credits)</div>
+        <input type="number" id="ob-weekly" min="0" step="1" value="1">
+      </div>
+      <button class="btn btn-primary btn-block" data-action="onboarding-submit">Los geht's</button>
+      <p class="footnote">Alle Daten bleiben nur auf diesem Tablet gespeichert.</p>
+    </div>
+  </section>
+
+  <div id="app-main" hidden>
+    <header class="topbar">
+      <svg class="mark" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 12l2 2 4-4"/></svg>
+      <h1 id="pageTitle">Kontostand</h1>
+    </header>
+
+    <main class="with-tabbar">
+      <section id="balance-view"></section>
+      <section id="add-view" class="stack" hidden></section>
+      <section id="history-view" hidden></section>
+      <section id="settings-view" hidden></section>
+    </main>
+  </div>
+
+  <nav class="tabbar" id="tabbar" hidden>
+    <div class="tabbar-inner">
+      <button class="tab" data-action="switch-tab" data-tab="balance">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 12l2 2 4-4"/></svg>
+        Kontostand
+      </button>
+      <button class="tab" data-action="switch-tab" data-tab="add">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
+        Buchen
+      </button>
+      <button class="tab" data-action="switch-tab" data-tab="history">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 8v4l3 2"/></svg>
+        Verlauf
+      </button>
+      <button class="tab" data-action="switch-tab" data-tab="settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="9" width="16" height="11" rx="2"/><path d="M8 9V7a4 4 0 0 1 8 0v2"/></svg>
+        Eltern
+      </button>
+    </div>
+  </nav>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var STORAGE_KEY = "sparapp_tablet_v1";
+  var TITLES = { balance: "Kontostand", add: "Buchen", history: "Verlauf", settings: "Eltern-Zugang" };
+  var TYPE_LABEL = {
+    initial: "Startguthaben",
+    weeklyBase: "Wöchentlicher Betrag",
+    weeklyInterest: "Zinsen",
+    deposit: "Einzahlung",
+    withdrawal: "Auszahlung"
+  };
+
+  var state = null;
+  var activeTab = "balance";
+  var settingsUnlocked = false;
+  var pinBuffer = "";
+  var pinMode = "verify"; // verify | set-new-1 | set-new-2
+  var pendingNewPin = "";
+  var pinError = false;
+  var isDeposit = true;
+  var addAmountValue = "";
+  var justBooked = false;
+  var showResetConfirm = false;
+  var savedToast = false;
+
+  // ---------- storage ----------
+  function loadState() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+  function saveState() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+  }
+  async function sha256Hex(str) {
+    var enc = new TextEncoder().encode(str);
+    var buf = await crypto.subtle.digest("SHA-256", enc);
+    return Array.prototype.map.call(new Uint8Array(buf), function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+  }
+
+  // ---------- date helpers ----------
+  function toISO(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+  function parseISO(s) { var p = s.split("-").map(Number); return new Date(p[0], p[1] - 1, p[2]); }
+  function startOfDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+  function addDays(d, n) { var r = new Date(d); r.setDate(r.getDate() + n); return r; }
+  function nextWeekdayOnOrAfter(from, weekday) { var d = startOfDay(from); var diff = (weekday - d.getDay() + 7) % 7; return addDays(d, diff); }
+  function lastWeekdayOnOrBefore(from, weekday) { var d = startOfDay(from); var diff = (d.getDay() - weekday + 7) % 7; return addDays(d, -diff); }
+  function formatDate(iso) { return parseISO(iso).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" }); }
+  function formatDateWeekday(iso) { return parseISO(iso).toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" }); }
+
+  // ---------- number helpers ----------
+  function round2(n) { return Math.round(n * 100) / 100; }
+  function uid() { return "x" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+  function formatNumber(n) {
+    var r = round2(n);
+    return Math.abs(r - Math.round(r)) < 0.001 ? String(Math.round(r)) : r.toFixed(2).replace(".", ",");
+  }
+  function formatAmount(n) { return formatNumber(n) + " " + (state.settings ? state.settings.currencySymbol : "Credits"); }
+
+  // ---------- ledger logic ----------
+  function signedAmount(tx) { return tx.type === "withdrawal" ? -tx.amount : tx.amount; }
+  function computeBalance() { return round2(state.transactions.reduce(function (sum, t) { return sum + signedAmount(t); }, 0)); }
+
+  function catchUp() {
+    if (!state.settings) return;
+    var s = state.settings;
+    var cursor = s.lastAutoBookingDate ? addDays(parseISO(s.lastAutoBookingDate), 7) : nextWeekdayOnOrAfter(parseISO(s.startDate), s.bookingWeekday);
+    var today = startOfDay(new Date());
+    var balance = computeBalance();
+    var changed = false;
+    while (cursor <= today) {
+      changed = true;
+      if (s.interestMode !== "percentage" && s.weeklyFixedAmount > 0) {
+        balance = round2(balance + s.weeklyFixedAmount);
+        state.transactions.push({ id: uid(), type: "weeklyBase", amount: s.weeklyFixedAmount, date: toISO(cursor) });
+      }
+      if (s.interestMode !== "fixed" && s.weeklyInterestPercent > 0) {
+        var interest = round2(balance * s.weeklyInterestPercent / 100);
+        if (interest > 0) {
+          balance = round2(balance + interest);
+          state.transactions.push({ id: uid(), type: "weeklyInterest", amount: interest, date: toISO(cursor) });
+        }
+      }
+      s.lastAutoBookingDate = toISO(cursor);
+      cursor = addDays(cursor, 7);
+    }
+    if (changed) saveState();
+  }
+
+  function nextBookingDate() {
+    var s = state.settings;
+    return s.lastAutoBookingDate ? addDays(parseISO(s.lastAutoBookingDate), 7) : nextWeekdayOnOrAfter(parseISO(s.startDate), s.bookingWeekday);
+  }
+
+  function completeOnboarding(startBalance, startDateISO, weeklyAmount) {
+    state.settings = {
+      weeklyFixedAmount: round2(Math.max(0, weeklyAmount)),
+      weeklyInterestPercent: 0,
+      interestMode: "fixed",
+      bookingWeekday: 6,
+      startDate: startDateISO,
+      lastAutoBookingDate: null,
+      currencySymbol: "Credits"
+    };
+    state.transactions = [{ id: uid(), type: "initial", amount: round2(Math.abs(startBalance)), date: startDateISO }];
+    saveState();
+    catchUp();
+  }
+
+  function addManualTransaction(amount, deposit) {
+    var a = round2(Math.abs(amount));
+    if (a <= 0) return;
+    state.transactions.push({ id: uid(), type: deposit ? "deposit" : "withdrawal", amount: a, date: toISO(new Date()) });
+    saveState();
+  }
+
+  function resetAll() {
+    state.transactions = [];
+    state.settings = null;
+    saveState();
+  }
+
+  // ---------- rendering ----------
+  function el(id) { return document.getElementById(id); }
+
+  function refreshUI() {
+    var onboarded = !!state.settings;
+    el("onboarding-view").hidden = onboarded;
+    el("app-main").hidden = !onboarded;
+    el("tabbar").hidden = !onboarded;
+
+    if (!onboarded) { renderOnboarding(); return; }
+
+    ["balance", "add", "history", "settings"].forEach(function (t) { el(t + "-view").hidden = (t !== activeTab); });
+    el("pageTitle").textContent = TITLES[activeTab];
+    Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (b) {
+      b.classList.toggle("active", b.dataset.tab === activeTab);
+    });
+
+    if (activeTab === "balance") renderBalance();
+    else if (activeTab === "add") renderAdd();
+    else if (activeTab === "history") renderHistory();
+    else if (activeTab === "settings") renderSettings();
+  }
+
+  function renderOnboarding() {
+    var d = el("ob-date");
+    if (!d.value) d.value = toISO(lastWeekdayOnOrBefore(new Date(), 6));
+  }
+
+  function ruleDescription(s) {
+    if (s.interestMode === "fixed") return "+" + formatNumber(s.weeklyFixedAmount) + " " + s.currencySymbol + " pro Woche";
+    if (s.interestMode === "percentage") return "+" + formatNumber(s.weeklyInterestPercent) + " % pro Woche";
+    return "+" + formatNumber(s.weeklyFixedAmount) + " " + s.currencySymbol + " & +" + formatNumber(s.weeklyInterestPercent) + " %";
+  }
+
+  function renderBalance() {
+    var s = state.settings;
+    var balance = computeBalance();
+    el("balance-view").innerHTML =
+      '<div class="balance-hero">' +
+        '<div class="balance-label">Dein Guthaben</div>' +
+        '<div class="balance-amount">' + formatAmount(balance) + '</div>' +
+        '<div class="balance-since muted">seit ' + formatDate(state.transactions[0].date) + '</div>' +
+        '<div class="rule-pill">' + ruleDescription(s) + '</div>' +
+        '<div class="next-booking">Nächste Gutschrift: ' + formatDateWeekday(toISO(nextBookingDate())) + '</div>' +
+      '</div>';
+  }
+
+  function renderAdd() {
+    el("add-view").innerHTML =
+      '<div class="direction-row">' +
+        '<button class="direction-btn deposit' + (isDeposit ? " active" : "") + '" data-action="toggle-direction" data-dir="deposit">Einzahlen</button>' +
+        '<button class="direction-btn withdraw' + (!isDeposit ? " active" : "") + '" data-action="toggle-direction" data-dir="withdraw">Ausgeben</button>' +
+      '</div>' +
+      '<div class="card amount-input-wrap">' +
+        '<div class="field-label" style="margin-bottom:10px;">Betrag (' + state.settings.currencySymbol + ')</div>' +
+        '<input type="number" id="add-amount-input" min="0" step="0.5" inputmode="decimal" placeholder="0" value="' + addAmountValue + '">' +
+      '</div>' +
+      '<button class="btn btn-block ' + (isDeposit ? "btn-primary" : "btn-danger-solid") + '" id="submit-tx-btn" data-action="submit-transaction">' + (isDeposit ? "Einzahlen" : "Ausgeben") + '</button>' +
+      '<div class="toast">' + (justBooked ? "Gebucht ✓" : "") + '</div>';
+    var input = el("add-amount-input");
+    var btn = el("submit-tx-btn");
+    function sync() { btn.disabled = !(parseFloat(input.value) > 0); }
+    input.addEventListener("input", function () { addAmountValue = input.value; sync(); });
+    sync();
+  }
+
+  function buildChart() {
+    var sorted = state.transactions.slice().sort(function (a, b) { return a.date.localeCompare(b.date); });
+    var points = []; var running = 0;
+    sorted.forEach(function (t) { running = round2(running + signedAmount(t)); points.push({ t: parseISO(t.date).getTime(), v: running }); });
+    if (points.length < 2) return '<div class="chart-empty muted">Noch keine Entwicklung – bald wächst hier dein Guthaben.</div>';
+    var w = 300, h = 120, padTop = 14, padBottom = 22, padX = 6;
+    var plotW = w - padX * 2, plotH = h - padTop - padBottom;
+    var minT = points[0].t, maxT = points[points.length - 1].t;
+    var vals = points.map(function (p) { return p.v; });
+    var minV = Math.min.apply(null, vals), maxV = Math.max.apply(null, vals);
+    if (minV === maxV) { minV -= 1; maxV += 1; }
+    function x(t) { return padX + (maxT === minT ? 0 : (t - minT) / (maxT - minT)) * plotW; }
+    function y(v) { return padTop + (1 - (v - minV) / (maxV - minV)) * plotH; }
+    var line = points.map(function (p, i) { return (i === 0 ? "M" : "L") + x(p.t).toFixed(1) + "," + y(p.v).toFixed(1); }).join(" ");
+    var baseY = (padTop + plotH).toFixed(1);
+    var area = line + " L" + x(points[points.length - 1].t).toFixed(1) + "," + baseY + " L" + x(points[0].t).toFixed(1) + "," + baseY + " Z";
+    var last = points[points.length - 1];
+    return '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" style="width:100%;height:120px;display:block;">' +
+      '<defs><linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0%" style="stop-color:var(--accent);stop-opacity:0.28"/>' +
+        '<stop offset="100%" style="stop-color:var(--accent);stop-opacity:0"/>' +
+      '</linearGradient></defs>' +
+      '<path d="' + area + '" fill="url(#areaGrad)" stroke="none"/>' +
+      '<path d="' + line + '" fill="none" style="stroke:var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '<circle cx="' + x(last.t).toFixed(1) + '" cy="' + y(last.v).toFixed(1) + '" r="4" style="fill:var(--accent)"/>' +
+      '<text x="' + padX + '" y="' + (h - 6) + '" class="chart-label">' + formatDate(sorted[0].date) + '</text>' +
+      '<text x="' + (w - padX) + '" y="' + (h - 6) + '" text-anchor="end" class="chart-label">' + formatDate(sorted[sorted.length - 1].date) + '</text>' +
+      '</svg>';
+  }
+
+  function txIcon(type) {
+    if (type === "withdrawal") return '<div class="tx-icon neg"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></div>';
+    if (type === "weeklyInterest") return '<div class="tx-icon gold"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M5 12H2M22 12h-3M6 6l2 2M18 6l-2 2M6 18l2-2M18 18l-2-2"/><circle cx="12" cy="12" r="4"/></svg></div>';
+    return '<div class="tx-icon pos"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></div>';
+  }
+
+  function renderHistory() {
+    var sortedDesc = state.transactions.slice().sort(function (a, b) { return b.date.localeCompare(a.date) || b.id.localeCompare(a.id); });
+    var rows = sortedDesc.map(function (t) {
+      var signed = signedAmount(t);
+      return '<div class="tx-row">' + txIcon(t.type) +
+        '<div class="tx-body"><div class="tx-type">' + TYPE_LABEL[t.type] + '</div><div class="tx-date">' + formatDate(t.date) + '</div></div>' +
+        '<div class="tx-amount ' + (signed < 0 ? "neg" : "pos") + '">' + (signed < 0 ? "−" : "+") + " " + formatNumber(Math.abs(signed)) + '</div>' +
+        '</div>';
+    }).join("");
+    el("history-view").innerHTML = '<div class="card chart-card">' + buildChart() + '</div><div class="tx-list">' + rows + '</div>';
+  }
+
+  // ---------- PIN pad ----------
+  function pinPadHTML(title, sub) {
+    var dots = "";
+    for (var i = 0; i < 4; i++) dots += '<div class="pin-dot' + (i < pinBuffer.length ? " filled" : "") + '"></div>';
+    var rows = [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"], ["", "0", "back"]];
+    var keys = rows.map(function (row) {
+      return row.map(function (k) {
+        if (k === "") return '<button class="pin-key empty"></button>';
+        if (k === "back") return '<button class="pin-key" data-action="pin-digit" data-digit="back">⌫</button>';
+        return '<button class="pin-key" data-action="pin-digit" data-digit="' + k + '">' + k + '</button>';
+      }).join("");
+    }).join("");
+    return '<div class="pin-title">' + title + '</div>' +
+      (sub ? '<div class="pin-sub muted">' + sub + '</div>' : "") +
+      '<div class="pin-dots">' + dots + '</div>' +
+      '<div class="pin-error">' + (pinError ? "Falsche PIN" : "") + '</div>' +
+      '<div class="pin-grid">' + keys + '</div>';
+  }
+
+  async function handlePinDigit(d) {
+    if (d === "back") { pinBuffer = pinBuffer.slice(0, -1); pinError = false; refreshUI(); return; }
+    if (pinBuffer.length >= 4) return;
+    pinBuffer += d;
+    pinError = false;
+    if (pinBuffer.length < 4) { refreshUI(); return; }
+
+    if (pinMode === "verify") {
+      var hash = await sha256Hex(pinBuffer);
+      pinBuffer = "";
+      if (hash === state.pinHash) { settingsUnlocked = true; }
+      else { pinError = true; }
+    } else if (pinMode === "set-new-1") {
+      pendingNewPin = pinBuffer; pinBuffer = ""; pinMode = "set-new-2";
+    } else if (pinMode === "set-new-2") {
+      if (pinBuffer === pendingNewPin) {
+        state.pinHash = await sha256Hex(pinBuffer);
+        saveState();
+        pinMode = "verify"; pendingNewPin = ""; savedToast = true;
+        setTimeout(function () { savedToast = false; refreshUI(); }, 1500);
+      } else { pinError = true; pinMode = "set-new-1"; pendingNewPin = ""; }
+      pinBuffer = "";
+    }
+    refreshUI();
+  }
+
+  // ---------- settings ----------
+  function renderSettings() {
+    if (!settingsUnlocked) {
+      var title = pinMode === "verify" ? "Eltern-PIN" : (pinMode === "set-new-1" ? "Neue PIN eingeben" : "Neue PIN bestätigen");
+      el("settings-view").innerHTML = '<div class="card">' + pinPadHTML(title, pinMode === "verify" ? "Für Fixbetrag, Zins und Reset" : null) + '</div>';
+      return;
+    }
+    var s = state.settings;
+    el("settings-view").innerHTML =
+      '<div class="stack">' +
+      '<div class="card stack">' +
+        '<div class="settings-section-title">Sparregeln</div>' +
+        '<div><div class="field-label">Fixbetrag / Woche</div><input type="number" id="set-fixed" min="0" step="1" value="' + s.weeklyFixedAmount + '"></div>' +
+        '<div><div class="field-label">Zins-Modus</div>' +
+          '<select id="set-mode">' +
+            '<option value="fixed"' + (s.interestMode === "fixed" ? " selected" : "") + '>Nur Fixbetrag</option>' +
+            '<option value="percentage"' + (s.interestMode === "percentage" ? " selected" : "") + '>Nur Prozent</option>' +
+            '<option value="combined"' + (s.interestMode === "combined" ? " selected" : "") + '>Fixbetrag + Prozent</option>' +
+          '</select>' +
+        '</div>' +
+        '<div id="settings-percent-group"' + (s.interestMode === "fixed" ? " hidden" : "") + '>' +
+          '<div class="field-label">Zins % / Woche</div><input type="number" id="set-percent" min="0" step="0.5" value="' + s.weeklyInterestPercent + '">' +
+        '</div>' +
+        '<button class="btn btn-primary btn-block" data-action="settings-save">Speichern</button>' +
+        '<div class="toast">' + (savedToast ? "Gespeichert ✓" : "") + '</div>' +
+      '</div>' +
+      '<div class="card stack">' +
+        '<div class="settings-section-title">PIN ändern</div>' +
+        '<button class="btn btn-ghost btn-block" data-action="change-pin-start">Neue Eltern-PIN festlegen</button>' +
+      '</div>' +
+      '<div class="danger-box">' +
+        '<div class="settings-section-title" style="color:var(--danger);">Von vorne beginnen</div>' +
+        '<p class="muted" style="font-size:13.5px;margin:6px 0 0;">Löscht alle Buchungen und Einstellungen unwiderruflich. Danach startet die Einrichtung neu.</p>' +
+        (showResetConfirm ?
+          '<div class="confirm-row"><button class="btn btn-ghost" data-action="reset-cancel">Abbrechen</button><button class="btn btn-danger-solid" data-action="reset-confirm">Alles löschen</button></div>' :
+          '<button class="btn btn-danger btn-block" style="margin-top:12px;" data-action="reset-open">Von vorne beginnen…</button>') +
+      '</div>' +
+      '<button class="btn btn-ghost btn-block" data-action="settings-done">Fertig</button>' +
+      '<p class="footnote">Daten werden nur lokal auf diesem Tablet gespeichert (kein Cloud-Abgleich).</p>' +
+      '</div>';
+
+    el("set-mode").addEventListener("change", function (e) {
+      el("settings-percent-group").hidden = (e.target.value === "fixed");
+    });
+  }
+
+  function handleSettingsSave() {
+    var s = state.settings;
+    s.weeklyFixedAmount = round2(Math.max(0, parseFloat(el("set-fixed").value) || 0));
+    s.interestMode = el("set-mode").value;
+    var percentField = el("set-percent");
+    s.weeklyInterestPercent = percentField ? round2(Math.max(0, parseFloat(percentField.value) || 0)) : 0;
+    saveState();
+    savedToast = true;
+    refreshUI();
+    setTimeout(function () { savedToast = false; refreshUI(); }, 1500);
+  }
+
+  // ---------- events ----------
+  document.addEventListener("click", async function (e) {
+    var b = e.target.closest("[data-action]");
+    if (!b) return;
+    var action = b.dataset.action;
+
+    if (action === "switch-tab") { activeTab = b.dataset.tab; refreshUI(); }
+    else if (action === "onboarding-submit") {
+      var bal = parseFloat(el("ob-balance").value) || 0;
+      var date = el("ob-date").value || toISO(lastWeekdayOnOrBefore(new Date(), 6));
+      var weekly = parseFloat(el("ob-weekly").value) || 0;
+      completeOnboarding(bal, date, weekly);
+      activeTab = "balance";
+      refreshUI();
+    }
+    else if (action === "toggle-direction") { isDeposit = (b.dataset.dir === "deposit"); refreshUI(); }
+    else if (action === "submit-transaction") {
+      var amt = parseFloat(addAmountValue) || 0;
+      if (amt > 0) {
+        addManualTransaction(amt, isDeposit);
+        addAmountValue = "";
+        justBooked = true;
+        refreshUI();
+        setTimeout(function () { justBooked = false; refreshUI(); }, 1500);
+      }
+    }
+    else if (action === "pin-digit") { await handlePinDigit(b.dataset.digit); }
+    else if (action === "settings-save") { handleSettingsSave(); }
+    else if (action === "change-pin-start") { pinMode = "set-new-1"; pinBuffer = ""; pendingNewPin = ""; pinError = false; refreshUI(); }
+    else if (action === "reset-open") { showResetConfirm = true; refreshUI(); }
+    else if (action === "reset-cancel") { showResetConfirm = false; refreshUI(); }
+    else if (action === "reset-confirm") {
+      resetAll(); settingsUnlocked = false; showResetConfirm = false; activeTab = "balance"; pinMode = "verify"; pinBuffer = "";
+      refreshUI();
+    }
+    else if (action === "settings-done") { settingsUnlocked = false; pinMode = "verify"; pinBuffer = ""; refreshUI(); }
+  });
+
+  // ---------- boot ----------
+  async function boot() {
+    state = loadState() || { transactions: [], settings: null, pinHash: null };
+    if (!state.pinHash) { state.pinHash = await sha256Hex("0000"); saveState(); }
+    if (state.settings) catchUp();
+    refreshUI();
+  }
+  boot();
+})();
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () {}); });
+}
+</script>
+</body>
+</html>
