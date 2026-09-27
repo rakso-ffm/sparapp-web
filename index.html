@@ -192,6 +192,41 @@
     font-size: 13px; font-weight: 800; color: var(--muted); font-family: inherit;
   }
   .segmented button.active { background: var(--surface); color: var(--accent-strong); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  .chart-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .segmented.small button { padding: 5px 10px; min-height: 30px; font-size: 12.5px; }
+  .curve-wrap { position: relative; height: 190px; margin-top: 16px; }
+  .curve-wrap svg { position: absolute; inset: 26px 0 0 0; width: 100%; height: calc(100% - 26px); display: block; overflow: visible; }
+  .curve-hits { position: absolute; inset: 0; display: flex; }
+  .curve-hits .bar { flex: 1 1 0; min-width: 0; max-width: none; height: 100%; }
+  .curve-dot {
+    position: absolute; left: 50%; width: 12px; height: 12px; margin: 0 0 -6px -6px; border-radius: 50%;
+    background: var(--surface); border: 3px solid var(--accent); opacity: 0; transition: opacity .15s;
+  }
+  .curve-hits .bar.selected::before {
+    content: ""; position: absolute; left: 50%; top: 26px; bottom: 0; border-left: 2px dashed var(--muted); opacity: .5;
+  }
+  .curve-hits .bar.selected .curve-dot { opacity: 1; }
+  @media (hover: hover) { .curve-hits .bar:hover .curve-dot { opacity: .7; } }
+  .curve-labels { position: relative; display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; font-weight: 700; color: var(--muted); }
+  .donut-wrap { display: flex; align-items: center; gap: 18px; margin-top: 16px; flex-wrap: wrap; justify-content: center; }
+  .donut { position: relative; width: 170px; height: 170px; flex-shrink: 0; }
+  .donut svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .donut-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+  .donut-center .dc-label { font-size: 11.5px; font-weight: 800; color: var(--muted); }
+  .donut-center .dc-value { font-family: "Baloo 2", sans-serif; font-size: 22px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .donut-legend { display: flex; flex-direction: column; gap: 8px; min-width: 180px; flex: 1; }
+  .donut-legend .dl-row { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 700; }
+  .donut-legend .dl-row i { width: 12px; height: 12px; border-radius: 4px; flex-shrink: 0; }
+  .donut-legend .dl-row span { flex: 1; }
+  .donut-legend .dl-row b { font-variant-numeric: tabular-nums; }
+  .donut-legend .dl-row.neg { color: var(--danger); border-top: 1px dashed var(--border); padding-top: 8px; }
+  .long-options { display: flex; justify-content: flex-end; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .long-options .link-btn { background: none; border: none; color: var(--muted); font-size: 12.5px; font-weight: 700; padding: 4px 2px; font-family: inherit; }
+  .long-options .mini-chip {
+    border: 1px solid var(--border); background: none; color: var(--muted); border-radius: 999px;
+    padding: 4px 10px; font-size: 12.5px; font-weight: 700; font-family: inherit; min-height: 30px;
+  }
+  .long-options .mini-chip.active { background: var(--accent-soft); color: var(--accent-strong); border-color: transparent; }
   .bar.forecast .seg-saved { background: repeating-linear-gradient(135deg, var(--accent) 0 5px, var(--accent-soft) 5px 9px); }
   .bar.forecast .seg-interest { background: repeating-linear-gradient(135deg, var(--gold) 0 5px, var(--gold-soft) 5px 9px); }
   .bar-labels span.forecast { font-weight: 600; }
@@ -376,7 +411,7 @@
   "use strict";
 
   var STORAGE_KEY = "sparapp_tablet_v1";
-  var APP_VERSION = "13";
+  var APP_VERSION = "15";
   var TITLES = { balance: "Kontostand", add: "Buchen", history: "Verlauf", settings: "Eltern-Zugang" };
   var TYPE_LABEL = {
     initial: "Startguthaben",
@@ -407,7 +442,9 @@
   var savedToast = false;
   var selectedWeek = null;   // ISO-Datum des Wochenbeginns im Verlauf
   var animateChart = false;
-  var forecastWeeks = 4;    // Vorschau im Verlauf: 0, 4, 13 oder 52 Wochen
+  var forecastWeeks = 4;    // Vorschau im Verlauf: 0, 4, 13, 52 Wochen oder 104/260/520 (2/5/10 Jahre)
+  var showLongOptions = false;
+  var chartType = "bars";    // bars | curve | donut
 
   // ---------- storage ----------
   function loadState() {
@@ -439,8 +476,8 @@
   function round2(n) { return Math.round(n * 100) / 100; }
   function uid() { return "x" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
   function formatNumber(n) {
-    var r = round2(n);
-    return Math.abs(r - Math.round(r)) < 0.001 ? String(Math.round(r)) : r.toFixed(2).replace(".", ",");
+    var r = round2(n), digits = Math.abs(r - Math.round(r)) < 0.001 ? 0 : 2;
+    return r.toLocaleString("de-DE", { minimumFractionDigits: digits, maximumFractionDigits: digits });
   }
   function formatAmount(n) { return formatNumber(n) + " " + (state.settings ? state.settings.currencySymbol : "Credits"); }
 
@@ -737,6 +774,25 @@
     sync();
   }
 
+  var MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+  // Beschriftung einer Säule: Woche (Standard), Monat (Vorschau bis 2 Jahre) oder Jahr (länger).
+  function periodMeta(unit, date) {
+    if (unit === "month") {
+      return { key: "M:" + toISO(date).slice(0, 7), label: MONTHS[date.getMonth()].slice(0, 3) + " " + String(date.getFullYear()).slice(2),
+        title: MONTHS[date.getMonth()] + " " + date.getFullYear(), endISO: toISO(new Date(date.getFullYear(), date.getMonth() + 1, 0)), period: "im Monat" };
+    }
+    if (unit === "year") {
+      return { key: "Y:" + date.getFullYear(), label: String(date.getFullYear()), title: "Jahr " + date.getFullYear(),
+        endISO: date.getFullYear() + "-12-31", period: "im Jahr" };
+    }
+    var wk = lastWeekdayOnOrBefore(date, state.settings.bookingWeekday);
+    return { key: toISO(wk), label: wk.getDate() + "." + (wk.getMonth() + 1) + ".", title: "Woche ab " + formatDateWeekday(toISO(wk)),
+      endISO: toISO(addDays(wk, 6)), period: "diese Woche" };
+  }
+  function formatUntil(iso) {
+    return parseISO(iso).getFullYear() === new Date().getFullYear() ? formatDateWeekday(iso) : formatDate(iso);
+  }
+
   // Wochen beginnen am Buchungstag (Samstag), die automatische Gutschrift steht also immer am Wochenanfang.
   function weekBuckets() {
     var wd = state.settings.bookingWeekday;
@@ -752,7 +808,8 @@
     var buckets = [], balance = 0, interestTotal = 0;
     while (cursor <= lastWeek) {
       var key = toISO(cursor), txs = byKey[key] || [];
-      var b = { key: key, txs: txs, initial: 0, base: 0, interest: 0, deposit: 0, withdrawal: 0 };
+      var b = periodMeta("week", cursor);
+      b.txs = txs; b.initial = 0; b.base = 0; b.interest = 0; b.deposit = 0; b.withdrawal = 0;
       txs.forEach(function (t) {
         var isInterest = t.type === "weeklyInterest" || t.type === "monthlyInterest";
         var f = t.type === "weeklyBase" ? "base" : isInterest ? "interest" : t.type;
@@ -772,24 +829,40 @@
   // Vorschau: mit der aktuellen Sparregel weiterrechnen, ohne Ausgaben. Was in dieser Woche noch aussteht,
   // landet in der ersten Vorschau-Woche.
   function forecastBuckets(past, weeks) {
+    if (!weeks) return [];
     var last = past[past.length - 1], lastKey = parseISO(last.key);
-    var out = [];
-    for (var i = 1; i <= weeks; i++) {
-      out.push({ key: toISO(addDays(lastKey, 7 * i)), txs: [], forecast: true, initial: 0, base: 0, interest: 0, deposit: 0, withdrawal: 0 });
-    }
-    if (!weeks) return out;
-    var events = simulateEvents(last.balance, currentRule(), addDays(lastKey, 7 * (weeks + 1) - 1));
-    var interestTotal = last.interestTotal, ei = 0;
-    out.forEach(function (b) {
-      var end = addDays(parseISO(b.key), 7);
-      b.balance = ei > 0 ? events[ei - 1].balance : last.balance;
-      while (ei < events.length && events[ei].date < end) {
-        var e = events[ei++];
-        if (e.kind === "base") b.base = round2(b.base + e.amount);
-        else { b.interest = round2(b.interest + e.amount); b.interestDay = true; interestTotal = round2(interestTotal + e.amount); }
-        b.balance = e.balance;
+    var unit = weeks <= 52 ? "week" : weeks <= 104 ? "month" : "year";
+    var horizonEnd = addDays(lastKey, 7 * (weeks + 1) - 1);
+    var events = simulateEvents(last.balance, currentRule(), horizonEnd);
+    var out = [], byKey = {};
+    function bucketFor(date) {
+      var m = periodMeta(unit, date);
+      if (!byKey[m.key]) {
+        m.txs = []; m.forecast = true; m.initial = 0; m.base = 0; m.interest = 0; m.deposit = 0; m.withdrawal = 0;
+        byKey[m.key] = m; out.push(m);
       }
-      b.interestTotal = interestTotal;
+      return byKey[m.key];
+    }
+    if (unit === "week") for (var i = 1; i <= weeks; i++) bucketFor(addDays(lastKey, 7 * i));
+    var balance = last.balance, interestTotal = last.interestTotal;
+    events.forEach(function (e) {
+      // Was in der laufenden Woche noch aussteht, zählt zur ersten Vorschau-Woche.
+      var b = unit === "week" && e.date < addDays(lastKey, 7) ? out[0] : bucketFor(e.date);
+      if (e.kind === "base") b.base = round2(b.base + e.amount);
+      else { b.interest = round2(b.interest + e.amount); b.interestDay = true; interestTotal = round2(interestTotal + e.amount); }
+      balance = e.balance;
+      b.balance = balance; b.interestTotal = interestTotal;
+    });
+    // Letzter Monat/letztes Jahr endet am Ende der Vorschau, nicht am Monats-/Jahresende.
+    var tail = out[out.length - 1];
+    if (tail && unit !== "week" && tail.endISO > toISO(horizonEnd)) {
+      tail.endISO = toISO(horizonEnd);
+      if (unit === "year") tail.title += " (bis " + MONTHS[horizonEnd.getMonth()] + ")";
+    }
+    var runB = last.balance, runI = last.interestTotal;
+    out.forEach(function (b) {
+      if (b.balance === undefined) { b.balance = runB; b.interestTotal = runI; }
+      runB = b.balance; runI = b.interestTotal;
     });
     return out;
   }
@@ -797,7 +870,91 @@
     var past = weekBuckets();
     if (!past.length) return past;
     past[past.length - 1].current = true;
-    return past.concat(forecastBuckets(past, forecastWeeks));
+    var all = past.concat(forecastBuckets(past, forecastWeeks));
+    var c = { initial: 0, base: 0, deposit: 0, withdrawal: 0 };
+    all.forEach(function (b) {
+      Object.keys(c).forEach(function (k) { c[k] = round2(c[k] + (b[k] || 0)); });
+      b.cum = { initial: c.initial, base: c.base, deposit: c.deposit, withdrawal: c.withdrawal };
+    });
+    return all;
+  }
+
+  function barDataAttrs(b) {
+    return ' data-action="select-week" data-week="' + b.key + '" data-balance="' + b.balance + '" data-interest="' + b.interest +
+      '" data-itotal="' + b.interestTotal + '" data-title="' + b.title + '" data-end="' + b.endISO + '" data-period="' + b.period + '"' +
+      (b.current ? ' data-current="1"' : '') +
+      ' aria-label="' + (b.forecast ? "Vorschau " : "") + b.title + ': ' + formatAmount(b.balance) + '"';
+  }
+
+  // Kurve: Guthaben als Fläche, Zinsanteil in Gold oben drauf, Vorschau blasser und gestrichelt.
+  function curveHTML(buckets, maxV) {
+    var n = buckets.length, W = 1000, H = 164;
+    var X = function (i) { return ((i + 0.5) / n * W).toFixed(1); };
+    var Y = function (v) { return (H - Math.max(0, v) / maxV * H).toFixed(1); };
+    var ci = buckets.findIndex(function (b) { return b.current; });
+    function area(from, to, top) {
+      if (to < from) return "";
+      var pts = [];
+      for (var i = from; i <= to; i++) pts.push(X(i) + "," + Y(top(buckets[i])));
+      return "M" + X(from) + "," + H + " L" + pts.join(" L") + " L" + X(to) + "," + H + " Z";
+    }
+    function line(from, to, top) {
+      var pts = [];
+      for (var i = from; i <= to; i++) pts.push(X(i) + "," + Y(top(buckets[i])));
+      return pts.length ? "M" + pts.join(" L") : "";
+    }
+    var total = function (b) { return b.balance; };
+    var saved = function (b) { return b.balance - b.interestTotal; };
+    function part(from, to, fc) {
+      var op = fc ? ' opacity="0.45"' : '';
+      return '<path d="' + area(from, to, total) + '" style="fill:var(--gold)"' + op + '/>' +
+        '<path d="' + area(from, to, saved) + '" style="fill:var(--accent)"' + op + '/>' +
+        '<path d="' + line(from, to, total) + '" fill="none" style="stroke:var(--gold)" stroke-width="2.5" vector-effect="non-scaling-stroke"' +
+          (fc ? ' stroke-dasharray="6 5"' : '') + '/>';
+    }
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">' +
+      part(0, ci, false) + (ci < n - 1 ? part(ci, n - 1, true) : '') + '</svg>';
+    var hits = buckets.map(function (b) {
+      var y = Math.max(0, b.balance) / maxV * 100;
+      return '<button class="bar' + (b.key === selectedWeek ? " selected" : "") + (b.forecast ? " forecast" : "") + '"' + barDataAttrs(b) + '>' +
+        '<span class="curve-dot tip-anchor" style="bottom:calc(' + y.toFixed(1) + '% * 164 / 190)"></span></button>';
+    }).join("");
+    var lbl = function (b) { return b ? (b.current ? "Heute" : b.label) : ""; };
+    return '<div class="curve-wrap" id="bars-scroll">' + svg + '<div class="curve-hits" id="bars">' + hits + '</div></div>' +
+      '<div class="curve-labels"><span>' + lbl(buckets[0]) + '</span>' +
+        (ci > 0 && ci < n - 1 ? '<span style="position:absolute;left:' + ((ci + 0.5) / n * 100).toFixed(1) + '%;transform:translateX(-50%);color:var(--text);">Heute</span>' : '') +
+        '<span>' + lbl(buckets[n - 1]) + '</span></div>';
+  }
+
+  // Aufteilung: Woher kommt das Geld bis zur gewählten Woche?
+  function donutHTML(b) {
+    var parts = [
+      { label: "Startguthaben", value: b.cum.initial, color: "var(--muted)" },
+      { label: "Taschengeld", value: b.cum.base, color: "var(--accent)" },
+      { label: "Eingezahlt", value: b.cum.deposit, color: "var(--accent-strong)" },
+      { label: "Zinsen", value: b.interestTotal, color: "var(--gold)" }
+    ].filter(function (p) { return p.value > 0; });
+    var sum = parts.reduce(function (a, p) { return a + p.value; }, 0) || 1;
+    var r = 15.9155, off = 0;   // Umfang 100
+    var rings = parts.map(function (p) {
+      var len = p.value / sum * 100;
+      var seg = '<circle cx="21" cy="21" r="' + r + '" fill="none" style="stroke:' + p.color + '" stroke-width="6" stroke-dasharray="' +
+        Math.max(0, len - 0.6).toFixed(2) + ' ' + (100 - Math.max(0, len - 0.6)).toFixed(2) + '" stroke-dashoffset="' + (-off).toFixed(2) + '"' +
+        (b.forecast ? ' opacity="0.6"' : '') + '/>';
+      off += len;
+      return seg;
+    }).join("");
+    var approx = b.forecast ? "≈ " : "";
+    var legend = parts.map(function (p) {
+      return '<div class="dl-row"><i style="background:' + p.color + '"></i><span>' + p.label + '</span><b>' + approx + formatNumber(p.value) +
+        ' <span class="muted" style="font-weight:600;">(' + Math.round(p.value / sum * 100) + ' %)</span></b></div>';
+    }).join("");
+    if (b.cum.withdrawal > 0) legend += '<div class="dl-row neg"><i style="background:var(--danger)"></i><span>Ausgegeben</span><b>−' + formatNumber(b.cum.withdrawal) + '</b></div>';
+    return '<div class="donut-wrap"><div class="donut"><svg viewBox="0 0 42 42" aria-hidden="true">' +
+        '<circle cx="21" cy="21" r="' + r + '" fill="none" style="stroke:var(--surface-2)" stroke-width="6"/>' + rings + '</svg>' +
+        '<div class="donut-center"><div class="dc-label">' + (b.current ? "Heute" : b.forecast ? "Vorschau" : "Damals") + '</div>' +
+          '<div class="dc-value">' + approx + formatNumber(b.balance) + '</div><div class="dc-label">' + escapeHtml(state.settings.currencySymbol) + '</div></div>' +
+      '</div><div class="donut-legend"><div class="muted" style="font-size:12.5px;font-weight:800;">Woher kommt dein Geld?</div>' + legend + '</div></div>';
   }
 
   function weekInfoHTML(buckets, idx) {
@@ -820,7 +977,7 @@
     else if (b.withdrawal) msg = "Diese Woche hast du etwas ausgegeben.";
     else if (!b.txs.length) msg = "Diese Woche ist noch nichts passiert.";
     else msg = "Weiter so!";
-    var title = b.current ? "Diese Woche" : (b.forecast ? "Vorschau: " : "") + "Woche ab " + formatDateWeekday(b.key);
+    var title = b.current ? "Diese Woche" : (b.forecast ? "Vorschau: " : "") + b.title;
     return '<div class="week-info-head"><div class="week-info-title">' + title + '</div>' +
         '<div class="week-info-balance">' + (b.forecast ? "≈ " : "") + formatAmount(b.balance) + '</div></div>' +
       (chips.length ? '<div class="week-chips">' + chips.join("") + '</div>' : "") +
@@ -844,43 +1001,58 @@
       var interestPart = bal > 0 ? Math.min(1, b.interestTotal / bal) : 0;
       var sel = b.key === selectedWeek ? " selected" : "";
       var fc = b.forecast ? " forecast" : "";
-      var d = parseISO(b.key);
       if (b.forecast && b === buckets[buckets.indexOf(last) + 1]) {
         bars += '<span class="today-divider" aria-hidden="true"></span>';
         labels += '<span class="today-divider" aria-hidden="true"></span>';
       }
-      bars += '<button class="bar' + sel + fc + '" data-action="select-week" data-week="' + b.key + '" data-balance="' + b.balance + '" data-interest="' + b.interest + '" data-itotal="' + b.interestTotal + '"' + (b.current ? ' data-current="1"' : '') + ' style="--h:' + h.toFixed(1) + '%" aria-label="' + (b.forecast ? "Vorschau " : "") + 'Woche ab ' + formatDate(b.key) + ': ' + formatAmount(b.balance) + '">' +
+      bars += '<button class="bar' + sel + fc + '"' + barDataAttrs(b) + ' style="--h:' + h.toFixed(1) + '%">' +
           '<span class="bar-value">' + (b.forecast ? "≈ " : "") + formatNumber(b.balance) + '</span>' +
           '<span class="bar-stack">' +
             (interestPart > 0 ? '<span class="seg-interest" style="height:' + (interestPart * 100).toFixed(1) + '%"></span>' : "") +
             '<span class="seg-saved"></span>' +
           '</span>' +
         '</button>';
-      labels += '<span class="' + (sel + fc).trim() + '" data-label="' + b.key + '">' + d.getDate() + '.' + (d.getMonth() + 1) + '.</span>';
+      labels += '<span class="' + (sel + fc).trim() + '" data-label="' + b.key + '">' + b.label + '</span>';
     });
     var idx = buckets.findIndex(function (b) { return b.key === selectedWeek; });
     var selB = buckets[idx];
-    return '<div class="chart-title">So ist dein Geld gewachsen</div>' +
-      '<div class="chart-summary" id="chart-summary">' + summaryHTML(selB.key, selB.balance, selB.interestTotal, selB.forecast, selB.current) + '</div>' +
+    var chartArea;
+    if (chartType === "curve") chartArea = curveHTML(buckets, maxV);
+    else if (chartType === "donut") chartArea = donutHTML(selB);
+    else chartArea = '<div class="bars-scroll" id="bars-scroll">' +
+        '<div class="bars' + (animateChart ? " grow" : "") + '" id="bars">' + bars + '</div>' +
+        '<div class="bar-labels">' + labels + '</div>' +
+      '</div>';
+    return '<div class="chart-head"><div class="chart-title">So ist dein Geld gewachsen</div>' +
+        '<div class="segmented small" role="group" aria-label="Diagramm">' +
+          [["bars", "Säulen"], ["curve", "Kurve"], ["donut", "Aufteilung"]].map(function (o) {
+            return '<button data-action="set-chart" data-type="' + o[0] + '"' + (chartType === o[0] ? ' class="active"' : '') + '>' + o[1] + '</button>';
+          }).join("") +
+        '</div></div>' +
+      '<div class="chart-summary" id="chart-summary">' + summaryHTML(selB.endISO, selB.balance, selB.interestTotal, selB.forecast, selB.current) + '</div>' +
       '<div class="forecast-row"><span class="forecast-label">Blick in die Zukunft</span>' +
         '<div class="segmented" role="group" aria-label="Vorschau">' +
           [[0, "Aus"], [4, "4 Wochen"], [13, "3 Monate"], [52, "1 Jahr"]].map(function (o) {
             return '<button data-action="set-forecast" data-weeks="' + o[0] + '"' + (forecastWeeks === o[0] ? ' class="active"' : '') + '>' + o[1] + '</button>';
           }).join("") +
         '</div></div>' +
-      '<div class="bars-scroll" id="bars-scroll">' +
-        '<div class="bars' + (animateChart ? " grow" : "") + '" id="bars">' + bars + '</div>' +
-        '<div class="bar-labels">' + labels + '</div>' +
+      '<div class="long-options">' +
+        (showLongOptions || forecastWeeks > 52 ?
+          [[104, "2 Jahre"], [260, "5 Jahre"], [520, "10 Jahre"]].map(function (o) {
+            return '<button class="mini-chip' + (forecastWeeks === o[0] ? ' active' : '') + '" data-action="set-forecast" data-weeks="' + o[0] + '">' + o[1] + '</button>';
+          }).join("") :
+          '<button class="link-btn" data-action="show-long-options">Noch weiter ›</button>') +
       '</div>' +
-      '<div class="legend"><span><i style="background:var(--accent)"></i>Dein Geld</span><span><i style="background:var(--gold)"></i>Zinsen</span>' +
-        (forecastWeeks ? '<span><i class="striped"></i>Vorschau</span>' : '') + '</div>' +
+      chartArea +
+      (chartType === "donut" ? '' : '<div class="legend"><span><i style="background:var(--accent)"></i>Dein Geld</span><span><i style="background:var(--gold)"></i>Zinsen</span>' +
+        (forecastWeeks ? '<span><i class="striped"></i>Vorschau</span>' : '') + '</div>') +
       '<div class="week-info" id="week-info">' + weekInfoHTML(buckets, idx) + '</div>';
   }
 
   // Summen oben: Stand am Ende der gewählten (oder gerade überfahrenen) Woche.
-  function summaryHTML(key, balance, interestTotal, forecast, current) {
+  function summaryHTML(endISO, balance, interestTotal, forecast, current) {
     var approx = forecast ? "≈ " : "";
-    var until = current ? "" : " bis " + formatDateWeekday(toISO(addDays(parseISO(key), 6)));
+    var until = current ? "" : " bis " + formatUntil(endISO);
     return '<div class="sum-chip saved"><div class="sum-label">' + (current ? "Selbst gespart" : "Gespart" + until) + '</div>' +
         '<div class="sum-value">' + approx + formatNumber(round2(balance - interestTotal)) + '</div></div>' +
       '<div class="sum-chip interest"><div class="sum-label">' + (current ? "Von Zinsen geschenkt" : "Zinsen" + until) + '</div>' +
@@ -889,7 +1061,7 @@
   function showSummaryForBar(bar) {
     var box = el("chart-summary");
     if (!box || !bar) return;
-    box.innerHTML = summaryHTML(bar.dataset.week, parseFloat(bar.dataset.balance), parseFloat(bar.dataset.itotal) || 0,
+    box.innerHTML = summaryHTML(bar.dataset.end, parseFloat(bar.dataset.balance), parseFloat(bar.dataset.itotal) || 0,
       bar.classList.contains("forecast"), bar.dataset.current === "1");
   }
 
@@ -898,6 +1070,7 @@
     var idx = buckets.findIndex(function (b) { return b.key === key; });
     if (idx < 0) return;
     selectedWeek = key;
+    if (chartType === "donut") { renderHistory(); return; }
     Array.prototype.forEach.call(document.querySelectorAll("#bars .bar"), function (n) { n.classList.toggle("selected", n.dataset.week === key); });
     Array.prototype.forEach.call(document.querySelectorAll(".bar-labels span"), function (n) { n.classList.toggle("selected", n.dataset.label === key); });
     el("week-info").innerHTML = weekInfoHTML(buckets, idx);
@@ -1175,6 +1348,8 @@
       activeTab = b.dataset.tab; refreshUI();
     }
     else if (action === "select-week") { selectWeek(b.dataset.week); }
+    else if (action === "set-chart") { chartType = b.dataset.type; animateChart = chartType === "bars"; refreshUI(); }
+    else if (action === "show-long-options") { showLongOptions = true; refreshUI(); }
     else if (action === "set-forecast") {
       forecastWeeks = Number(b.dataset.weeks);
       var fb = allBuckets();
@@ -1243,11 +1418,11 @@
     var tip = el("bar-tip"), fc = bar.classList.contains("forecast"), approx = fc ? "≈ " : "";
     var interest = parseFloat(bar.dataset.interest) || 0;
     tip.innerHTML =
-      '<div class="tip-head">' + formatDateWeekday(bar.dataset.week) + (fc ? " · Vorschau" : "") + '</div>' +
+      '<div class="tip-head">' + bar.dataset.title + (fc ? " · Vorschau" : "") + '</div>' +
       '<div class="tip-row"><span>Guthaben</span><b>' + approx + formatAmount(parseFloat(bar.dataset.balance)) + '</b></div>' +
-      (interest > 0 ? '<div class="tip-row"><span>Zinsen diese Woche</span><b>+' + formatNumber(interest) + '</b></div>' : '') +
+      (interest > 0 ? '<div class="tip-row"><span>Zinsen ' + bar.dataset.period + '</span><b>+' + formatNumber(interest) + '</b></div>' : '') +
       '<div class="tip-row"><span>Zinsen gesamt</span><b>' + approx + formatNumber(parseFloat(bar.dataset.itotal) || 0) + '</b></div>';
-    var stack = bar.querySelector(".bar-stack").getBoundingClientRect();
+    var stack = (bar.querySelector(".tip-anchor") || bar.querySelector(".bar-stack")).getBoundingClientRect();
     tip.style.left = (stack.left + stack.width / 2) + "px";
     tip.style.top = (stack.top - 10) + "px";
     tip.hidden = false;
