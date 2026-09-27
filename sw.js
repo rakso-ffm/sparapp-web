@@ -1,5 +1,5 @@
-// Bei Änderungen an index.html o.ä. die Version hochzählen, damit Geräte neu laden.
-const CACHE = "sparkonto-v3";
+// Bei Änderungen an index.html o.ä. die Version hochzählen (auch APP_VERSION in index.html).
+const CACHE = "sparkonto-v4";
 const SHELL = [
   "./",
   "index.html",
@@ -22,7 +22,7 @@ self.addEventListener("activate", (e) => {
   );
 });
 
-// App-Shell: erst Netz, dann Cache (Updates kommen sofort an, offline geht trotzdem).
+// App-Shell: erst Netz (am HTTP-Cache vorbei), dann Cache – Updates kommen sofort an, offline geht trotzdem.
 // Google Fonts: Cache zuerst, im Hintergrund auffrischen.
 self.addEventListener("fetch", (e) => {
   const req = e.request;
@@ -31,7 +31,7 @@ self.addEventListener("fetch", (e) => {
 
   if (url.origin === self.location.origin) {
     e.respondWith(
-      fetch(req)
+      fetch(req, { cache: "no-cache" })
         .then((res) => {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put(req, copy));

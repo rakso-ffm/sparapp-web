@@ -223,7 +223,7 @@
         <input type="number" id="ob-percent" min="0" step="0.5" value="1">
       </div>
       <button class="btn btn-primary btn-block" data-action="onboarding-submit">Los geht's</button>
-      <p class="footnote">Alle Daten bleiben nur auf diesem Tablet gespeichert.</p>
+      <p class="footnote">Alle Daten bleiben nur auf diesem Tablet gespeichert. · Version <span class="app-version"></span></p>
     </div>
   </section>
 
@@ -268,6 +268,7 @@
   "use strict";
 
   var STORAGE_KEY = "sparapp_tablet_v1";
+  var APP_VERSION = "4";
   var TITLES = { balance: "Kontostand", add: "Buchen", history: "Verlauf", settings: "Eltern-Zugang" };
   var TYPE_LABEL = {
     initial: "Startguthaben",
@@ -616,7 +617,7 @@
           '<button class="btn btn-danger btn-block" style="margin-top:12px;" data-action="reset-open">Von vorne beginnen…</button>') +
       '</div>' +
       '<button class="btn btn-ghost btn-block" data-action="settings-done">Fertig</button>' +
-      '<p class="footnote">Daten werden nur lokal auf diesem Tablet gespeichert (kein Cloud-Abgleich).</p>' +
+      '<p class="footnote">Daten werden nur lokal auf diesem Tablet gespeichert (kein Cloud-Abgleich). · Version ' + APP_VERSION + '</p>' +
       '</div>';
 
     el("set-mode").addEventListener("change", function (e) {
@@ -686,6 +687,7 @@
 
   // ---------- boot ----------
   async function boot() {
+    Array.prototype.forEach.call(document.querySelectorAll(".app-version"), function (n) { n.textContent = APP_VERSION; });
     state = loadState() || { transactions: [], settings: null, pinHash: null };
     if (!state.pinHash) { state.pinHash = await sha256Hex("0000"); saveState(); }
     if (state.settings) catchUp();
@@ -696,7 +698,16 @@
 </script>
 <script>
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () {}); });
+  // Neue Version aktiv geworden: einmal neu laden, damit sie sofort sichtbar ist.
+  var hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener("controllerchange", function () {
+    if (hadController) location.reload();
+  });
+  window.addEventListener("load", function () {
+    navigator.serviceWorker.register("sw.js", { updateViaCache: "none" })
+      .then(function (reg) { reg.update(); })
+      .catch(function () {});
+  });
 }
 </script>
 </body>
