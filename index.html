@@ -120,6 +120,23 @@
     text-align: center; font-family: "Baloo 2", sans-serif; font-size: 40px; font-weight: 700;
     min-height: 72px; border-radius: 16px;
   }
+  .tx-row.tappable { width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+  .tx-row.tappable:active { transform: scale(.99); }
+  .tx-chevron { color: var(--muted); font-size: 20px; line-height: 1; margin-left: 2px; }
+  .sheet-backdrop {
+    position: fixed; inset: 0; z-index: 50; background: rgba(10,20,14,.45);
+    display: flex; align-items: flex-end; justify-content: center;
+  }
+  .sheet-backdrop[hidden] { display: none; }
+  .sheet {
+    width: 100%; max-width: 560px; max-height: 92vh; overflow-y: auto; background: var(--bg);
+    border-radius: 22px 22px 0 0; padding: 18px 20px calc(20px + env(safe-area-inset-bottom));
+    box-shadow: 0 -10px 30px rgba(0,0,0,.2);
+  }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .sheet-title { font-family: "Baloo 2", sans-serif; font-size: 20px; font-weight: 700; }
+  .sheet-close { background: var(--surface-2); border: none; border-radius: 999px; width: 36px; height: 36px; font-size: 18px; color: var(--muted); }
+  .sheet-note { font-size: 13.5px; line-height: 1.45; }
   .date-hint { font-size: 13px; font-weight: 700; margin-top: 6px; min-height: 18px; }
   .toast { text-align: center; font-size: 13.5px; font-weight: 700; color: var(--accent); min-height: 18px; }
 
@@ -291,6 +308,10 @@
     </main>
   </div>
 
+  <div class="sheet-backdrop" id="sheet-backdrop" data-action="sheet-backdrop" hidden>
+    <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
+  </div>
+
   <nav class="tabbar" id="tabbar" hidden>
     <div class="tabbar-inner">
       <button class="tab" data-action="switch-tab" data-tab="balance">
@@ -318,7 +339,7 @@
   "use strict";
 
   var STORAGE_KEY = "sparapp_tablet_v1";
-  var APP_VERSION = "6";
+  var APP_VERSION = "7";
   var TITLES = { balance: "Kontostand", add: "Buchen", history: "Verlauf", settings: "Eltern-Zugang" };
   var TYPE_LABEL = {
     initial: "Startguthaben",
@@ -338,6 +359,10 @@
   var isDeposit = true;
   var addAmountValue = "";
   var addDateValue = "";   // leer = heute
+  var sheetTxId = null;    // Buchung, die im Bearbeiten-Fenster offen ist
+  var editDraft = null;    // { type, amount, date }
+  var confirmDelete = false;
+  var unlockedBySheet = false;
   var justBooked = false;
   var showResetConfirm = false;
   var savedToast = false;
@@ -400,13 +425,41 @@
         var interest = round2(balance * s.weeklyInterestPercent / 100);
         if (interest > 0) {
           balance = round2(balance + interest);
-          state.transactions.push({ id: uid(), type: "weeklyInterest", amount: interest, date: toISO(cursor) });
+          state.transactions.push({ id: uid(), type: "weeklyInterest", amount: interest, date: toISO(cursor), rate: s.weeklyInterestPercent });
         }
       }
       s.lastAutoBookingDate = toISO(cursor);
       cursor = addDays(cursor, 7);
     }
     if (changed) saveState();
+  }
+
+  // Reihenfolge innerhalb eines Tages: Start, Taschengeld, Zinsen, dann manuelle Buchungen.
+  var TYPE_RANK = { initial: 0, weeklyBase: 1, weeklyInterest: 2, deposit: 3, withdrawal: 3 };
+  function chronological() {
+    return state.transactions.map(function (t, i) { return { t: t, i: i }; })
+      .sort(function (a, b) { return a.t.date.localeCompare(b.t.date) || TYPE_RANK[a.t.type] - TYPE_RANK[b.t.type] || a.i - b.i; })
+      .map(function (x) { return x.t; });
+  }
+
+  // Zinssatz einer älteren Zinsbuchung ohne gespeicherten Satz aus Betrag und Vorher-Guthaben ableiten.
+  function inferRate(tx, balanceBefore) {
+    var s = state.settings;
+    if (balanceBefore <= 0) return s.weeklyInterestPercent;
+    if (round2(balanceBefore * s.weeklyInterestPercent / 100) === tx.amount) return s.weeklyInterestPercent;
+    return round2(tx.amount / balanceBefore * 100);
+  }
+
+  // Nach Änderungen an früheren Buchungen: Zinsbuchungen ab fromISO mit dem damaligen Satz neu berechnen.
+  function recalcInterestFrom(fromISO) {
+    var balance = 0;
+    chronological().forEach(function (t) {
+      if (t.type === "weeklyInterest") {
+        if (t.rate === undefined) t.rate = inferRate(t, balance);
+        if (t.date >= fromISO) t.amount = round2(Math.max(0, balance) * t.rate / 100);
+      }
+      balance = round2(balance + signedAmount(t));
+    });
   }
 
   function nextBookingDate() {
@@ -432,7 +485,9 @@
   function addManualTransaction(amount, deposit, dateISO) {
     var a = round2(Math.abs(amount));
     if (a <= 0) return;
-    state.transactions.push({ id: uid(), type: deposit ? "deposit" : "withdrawal", amount: a, date: clampBookingDate(dateISO) });
+    var date = clampBookingDate(dateISO);
+    state.transactions.push({ id: uid(), type: deposit ? "deposit" : "withdrawal", amount: a, date: date });
+    recalcInterestFrom(date);
     saveState();
   }
 
@@ -463,6 +518,7 @@
     else if (activeTab === "add") renderAdd();
     else if (activeTab === "history") renderHistory();
     else if (activeTab === "settings") renderSettings();
+    renderSheet();
   }
 
   function renderOnboarding() {
@@ -677,10 +733,11 @@
     var sortedDesc = state.transactions.slice().sort(function (a, b) { return b.date.localeCompare(a.date) || b.id.localeCompare(a.id); });
     var rows = sortedDesc.map(function (t) {
       var signed = signedAmount(t);
-      return '<div class="tx-row">' + txIcon(t.type) +
+      return '<button class="tx-row tappable" data-action="open-tx" data-id="' + t.id + '">' + txIcon(t.type) +
         '<div class="tx-body"><div class="tx-type">' + TYPE_LABEL[t.type] + '</div><div class="tx-date">' + formatDate(t.date) + '</div></div>' +
         '<div class="tx-amount ' + (signed < 0 ? "neg" : "pos") + '">' + (signed < 0 ? "−" : "+") + " " + formatNumber(Math.abs(signed)) + '</div>' +
-        '</div>';
+        (isEditable(t) ? '<span class="tx-chevron">›</span>' : '') +
+        '</button>';
     }).join("");
     el("history-view").innerHTML = '<div class="card chart-card">' + buildChart() + '</div><div class="tx-list">' + rows + '</div>';
     if (selectedWeek) scrollBarIntoView(selectedWeek, false);
@@ -690,6 +747,101 @@
         var bars = el("bars"); if (bars) bars.classList.remove("grow");
       }); });
     }
+  }
+
+  // ---------- Buchung bearbeiten ----------
+  function isEditable(t) { return t.type === "deposit" || t.type === "withdrawal" || t.type === "initial"; }
+  function findTx(id) { return state.transactions.filter(function (t) { return t.id === id; })[0]; }
+
+  function openTxSheet(id) {
+    var t = findTx(id);
+    if (!t) return;
+    sheetTxId = id;
+    editDraft = { type: t.type, amount: String(t.amount), date: t.date };
+    confirmDelete = false;
+    pinMode = "verify"; pinBuffer = ""; pinError = false;
+    refreshUI();
+  }
+  function closeTxSheet() {
+    sheetTxId = null; editDraft = null; confirmDelete = false;
+    if (unlockedBySheet) { settingsUnlocked = false; unlockedBySheet = false; }
+    pinBuffer = ""; pinError = false;
+    refreshUI();
+  }
+
+  function renderSheet() {
+    var backdrop = el("sheet-backdrop");
+    var t = sheetTxId && findTx(sheetTxId);
+    backdrop.hidden = !t;
+    if (!t) return;
+    var head = function (title) { return '<div class="sheet-head"><div class="sheet-title">' + title + '</div><button class="sheet-close" data-action="sheet-close" aria-label="Schließen">✕</button></div>'; };
+    var html;
+    if (!isEditable(t)) {
+      html = head(TYPE_LABEL[t.type]) +
+        '<div class="card stack"><div class="sheet-note">' +
+          '<b>' + formatAmount(t.amount) + '</b> am ' + formatDate(t.date) +
+          (t.type === "weeklyInterest" && t.rate !== undefined ? ' (' + formatNumber(t.rate) + ' %)' : '') + '.<br>' +
+          '<span class="muted">Automatisch gebucht. Wird von selbst angepasst, wenn frühere Buchungen geändert werden.</span>' +
+        '</div></div>';
+    } else if (!settingsUnlocked) {
+      html = head("Buchung ändern") + '<div class="card">' + pinPadHTML("Eltern-PIN", "Zum Ändern oder Löschen") + '</div>';
+    } else if (t.type === "initial") {
+      html = head("Startguthaben ändern") +
+        '<div class="card stack">' +
+          '<div><div class="field-label">Betrag (' + state.settings.currencySymbol + ')</div>' +
+          '<input type="number" id="edit-amount" min="0" step="0.5" inputmode="decimal" value="' + editDraft.amount + '"></div>' +
+          '<div class="sheet-note muted">Startdatum: ' + formatDate(t.date) + '. Die Zinsen danach werden neu berechnet.</div>' +
+          '<button class="btn btn-primary btn-block" data-action="edit-save">Speichern</button>' +
+        '</div>';
+    } else {
+      var dep = editDraft.type === "deposit";
+      html = head("Buchung ändern") +
+        '<div class="stack">' +
+          '<div class="direction-row">' +
+            '<button class="direction-btn deposit' + (dep ? " active" : "") + '" data-action="edit-dir" data-dir="deposit">Einzahlung</button>' +
+            '<button class="direction-btn withdraw' + (!dep ? " active" : "") + '" data-action="edit-dir" data-dir="withdrawal">Auszahlung</button>' +
+          '</div>' +
+          '<div class="card stack">' +
+            '<div><div class="field-label">Betrag (' + state.settings.currencySymbol + ')</div>' +
+            '<input type="number" id="edit-amount" min="0" step="0.5" inputmode="decimal" value="' + editDraft.amount + '"></div>' +
+            '<div><div class="field-label">Datum</div>' +
+            '<input type="date" id="edit-date" min="' + state.settings.startDate + '" max="' + toISO(new Date()) + '" value="' + editDraft.date + '"></div>' +
+          '</div>' +
+          '<button class="btn btn-primary btn-block" data-action="edit-save">Speichern</button>' +
+          (confirmDelete ?
+            '<div class="danger-box"><div class="sheet-note" style="font-weight:700;">Diese Buchung wirklich löschen?</div>' +
+              '<div class="confirm-row"><button class="btn btn-ghost" data-action="edit-delete-cancel">Abbrechen</button><button class="btn btn-danger-solid" data-action="edit-delete-confirm">Löschen</button></div></div>' :
+            '<button class="btn btn-danger btn-block" data-action="edit-delete">Buchung löschen</button>') +
+        '</div>';
+    }
+    el("sheet").innerHTML = html;
+    var amt = el("edit-amount"), dt = el("edit-date");
+    if (amt) amt.addEventListener("input", function () { editDraft.amount = amt.value; });
+    if (dt) dt.addEventListener("change", function () { editDraft.date = dt.value; });
+  }
+
+  function saveTxEdit() {
+    var t = findTx(sheetTxId);
+    var amount = round2(Math.abs(parseFloat(editDraft.amount) || 0));
+    if (!t || (amount <= 0 && t.type !== "initial")) return;
+    var oldDate = t.date;
+    t.amount = amount;
+    if (t.type !== "initial") {
+      t.type = editDraft.type;
+      t.date = clampBookingDate(editDraft.date);
+    }
+    recalcInterestFrom(oldDate < t.date ? oldDate : t.date);
+    saveState();
+    closeTxSheet();
+  }
+
+  function deleteTx() {
+    var t = findTx(sheetTxId);
+    if (!t || t.type === "initial") return;
+    state.transactions = state.transactions.filter(function (x) { return x.id !== t.id; });
+    recalcInterestFrom(t.date);
+    saveState();
+    closeTxSheet();
   }
 
   // ---------- PIN pad ----------
@@ -721,7 +873,7 @@
     if (pinMode === "verify") {
       var hash = await sha256Hex(pinBuffer);
       pinBuffer = "";
-      if (hash === state.pinHash) { settingsUnlocked = true; }
+      if (hash === state.pinHash) { settingsUnlocked = true; if (sheetTxId) unlockedBySheet = true; }
       else { pinError = true; }
     } else if (pinMode === "set-new-1") {
       pendingNewPin = pinBuffer; pinBuffer = ""; pinMode = "set-new-2";
@@ -811,6 +963,14 @@
       activeTab = b.dataset.tab; refreshUI();
     }
     else if (action === "select-week") { selectWeek(b.dataset.week); }
+    else if (action === "open-tx") { openTxSheet(b.dataset.id); }
+    else if (action === "sheet-close") { closeTxSheet(); }
+    else if (action === "sheet-backdrop") { if (e.target === b) closeTxSheet(); }
+    else if (action === "edit-dir") { editDraft.type = b.dataset.dir; refreshUI(); }
+    else if (action === "edit-save") { saveTxEdit(); }
+    else if (action === "edit-delete") { confirmDelete = true; refreshUI(); }
+    else if (action === "edit-delete-cancel") { confirmDelete = false; refreshUI(); }
+    else if (action === "edit-delete-confirm") { deleteTx(); }
     else if (action === "week-step") {
       var wb = weekBuckets();
       var wi = wb.findIndex(function (x) { return x.key === selectedWeek; }) + Number(b.dataset.step);
