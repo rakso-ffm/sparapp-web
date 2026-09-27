@@ -142,6 +142,7 @@
     border: 1.5px solid var(--border); background: var(--surface); border-radius: 999px; padding: 6px 12px;
     min-height: 36px; font-size: 15px; font-weight: 700; color: var(--text); font-family: inherit;
   }
+  .note-center .currency-chips { justify-content: center; }
   .date-hint { font-size: 13px; font-weight: 700; margin-top: 6px; min-height: 18px; }
   .toast { text-align: center; font-size: 13.5px; font-weight: 700; color: var(--accent); min-height: 18px; }
 
@@ -224,7 +225,7 @@
   .tx-icon.neg { background: var(--danger-soft); color: var(--danger); }
   .tx-icon.gold { background: var(--gold-soft); color: var(--gold); }
   .tx-body { flex: 1; min-width: 0; }
-  .tx-type { font-weight: 700; font-size: 14.5px; }
+  .tx-type { font-weight: 700; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tx-date { font-size: 12.5px; color: var(--muted); margin-top: 1px; }
   .tx-amount { font-weight: 800; font-variant-numeric: tabular-nums; font-size: 15px; white-space: nowrap; }
   .tx-amount.pos { color: var(--accent-strong); }
@@ -358,7 +359,7 @@
   "use strict";
 
   var STORAGE_KEY = "sparapp_tablet_v1";
-  var APP_VERSION = "9";
+  var APP_VERSION = "10";
   var TITLES = { balance: "Kontostand", add: "Buchen", history: "Verlauf", settings: "Eltern-Zugang" };
   var TYPE_LABEL = {
     initial: "Startguthaben",
@@ -379,6 +380,7 @@
   var isDeposit = true;
   var addAmountValue = "";
   var addDateValue = "";   // leer = heute
+  var addNoteValue = "";
   var sheetTxId = null;    // Buchung, die im Bearbeiten-Fenster offen ist
   var editDraft = null;    // { type, amount, date }
   var confirmDelete = false;
@@ -553,11 +555,13 @@
     catchUp();
   }
 
-  function addManualTransaction(amount, deposit, dateISO) {
+  function addManualTransaction(amount, deposit, dateISO, note) {
     var a = round2(Math.abs(amount));
     if (a <= 0) return;
     var date = clampBookingDate(dateISO);
-    state.transactions.push({ id: uid(), type: deposit ? "deposit" : "withdrawal", amount: a, date: date });
+    var tx = { id: uid(), type: deposit ? "deposit" : "withdrawal", amount: a, date: date };
+    if (cleanNote(note)) tx.note = cleanNote(note);
+    state.transactions.push(tx);
     recalcInterestFrom(date);
     saveState();
   }
@@ -653,6 +657,24 @@
       '</div>';
   }
 
+  function escapeHtml(v) {
+    return String(v).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; });
+  }
+  function cleanNote(v) { return String(v || "").trim().slice(0, 40); }
+  var NOTE_SUGGESTIONS = {
+    deposit: ["🎂 Geburtstag", "👵 Oma & Opa", "🧹 Mithelfen", "🔎 Gefunden"],
+    withdrawal: ["🍭 Süßes", "🧸 Spielzeug", "📚 Buch", "🎁 Geschenk"]
+  };
+  function noteFieldHTML(id, value, deposit) {
+    return '<div class="field-label" style="margin:16px 0 10px;">Wofür? <span style="text-transform:none;letter-spacing:0;font-weight:600;">(freiwillig)</span></div>' +
+      '<input type="text" id="' + id + '" maxlength="40" autocomplete="off" placeholder="' + (deposit ? "z. B. Geburtstag" : "z. B. Eis") + '" value="' + escapeHtml(value) + '">' +
+      '<div class="currency-chips">' +
+        NOTE_SUGGESTIONS[deposit ? "deposit" : "withdrawal"].map(function (n) {
+          return '<button type="button" data-action="pick-note" data-target="' + id + '" data-value="' + n + '">' + n + '</button>';
+        }).join("") +
+      '</div>';
+  }
+
   // Nachträgliche Buchungen: frühestens am Startdatum, höchstens heute.
   function clampBookingDate(iso) {
     var today = toISO(new Date()), min = state.settings.startDate;
@@ -672,6 +694,7 @@
         '<div class="field-label" style="margin:16px 0 10px;">Datum</div>' +
         '<input type="date" id="add-date-input" min="' + state.settings.startDate + '" max="' + toISO(new Date()) + '" value="' + clampBookingDate(addDateValue) + '">' +
         '<div class="date-hint muted" id="add-date-hint"></div>' +
+        '<div class="note-center">' + noteFieldHTML("add-note-input", addNoteValue, isDeposit) + '</div>' +
       '</div>' +
       '<button class="btn btn-block ' + (isDeposit ? "btn-primary" : "btn-danger-solid") + '" id="submit-tx-btn" data-action="submit-transaction">' + (isDeposit ? "Einzahlen" : "Ausgeben") + '</button>' +
       '<div class="toast">' + (justBooked ? "Gebucht ✓" : "") + '</div>';
@@ -685,6 +708,7 @@
       el("add-date-hint").textContent = iso === toISO(new Date()) ? "Heute" : "Nachträglich für " + formatDateWeekday(iso);
     }
     dateInput.addEventListener("change", function () { addDateValue = dateInput.value; syncDate(); });
+    el("add-note-input").addEventListener("input", function (e) { addNoteValue = e.target.value; });
     syncDate();
     sync();
   }
@@ -863,7 +887,8 @@
     var rows = sortedDesc.map(function (t) {
       var signed = signedAmount(t);
       return '<button class="tx-row tappable" data-action="open-tx" data-id="' + t.id + '">' + txIcon(t.type) +
-        '<div class="tx-body"><div class="tx-type">' + TYPE_LABEL[t.type] + '</div><div class="tx-date">' + formatDate(t.date) + '</div></div>' +
+        '<div class="tx-body"><div class="tx-type">' + (t.note ? escapeHtml(t.note) : TYPE_LABEL[t.type]) + '</div>' +
+          '<div class="tx-date">' + (t.note ? TYPE_LABEL[t.type] + ' · ' : '') + formatDate(t.date) + '</div></div>' +
         '<div class="tx-amount ' + (signed < 0 ? "neg" : "pos") + '">' + (signed < 0 ? "−" : "+") + " " + formatNumber(Math.abs(signed)) + '</div>' +
         (isEditable(t) ? '<span class="tx-chevron">›</span>' : '') +
         '</button>';
@@ -886,7 +911,7 @@
     var t = findTx(id);
     if (!t) return;
     sheetTxId = id;
-    editDraft = { type: t.type, amount: String(t.amount), date: t.date };
+    editDraft = { type: t.type, amount: String(t.amount), date: t.date, note: t.note || "" };
     confirmDelete = false;
     pinMode = "verify"; pinBuffer = ""; pinError = false;
     refreshUI();
@@ -935,6 +960,7 @@
             '<input type="number" id="edit-amount" min="0" step="0.5" inputmode="decimal" value="' + editDraft.amount + '"></div>' +
             '<div><div class="field-label">Datum</div>' +
             '<input type="date" id="edit-date" min="' + state.settings.startDate + '" max="' + toISO(new Date()) + '" value="' + editDraft.date + '"></div>' +
+            '<div>' + noteFieldHTML("edit-note", editDraft.note, dep).replace('style="margin:16px 0 10px;"', 'style="margin-bottom:10px;"') + '</div>' +
           '</div>' +
           '<button class="btn btn-primary btn-block" data-action="edit-save">Speichern</button>' +
           (confirmDelete ?
@@ -947,6 +973,8 @@
     var amt = el("edit-amount"), dt = el("edit-date");
     if (amt) amt.addEventListener("input", function () { editDraft.amount = amt.value; });
     if (dt) dt.addEventListener("change", function () { editDraft.date = dt.value; });
+    var nt = el("edit-note");
+    if (nt) nt.addEventListener("input", function () { editDraft.note = nt.value; });
   }
 
   function saveTxEdit() {
@@ -958,6 +986,7 @@
     if (t.type !== "initial") {
       t.type = editDraft.type;
       t.date = clampBookingDate(editDraft.date);
+      if (cleanNote(editDraft.note)) t.note = cleanNote(editDraft.note); else delete t.note;
     }
     recalcInterestFrom(oldDate < t.date ? oldDate : t.date);
     saveState();
@@ -1114,6 +1143,10 @@
       selectedWeek = fb[fb.length - 1].key;   // Ergebnis der Vorschau direkt zeigen
       refreshUI();
     }
+    else if (action === "pick-note") {
+      var ni = el(b.dataset.target);
+      if (ni) { ni.value = b.dataset.value; ni.dispatchEvent(new Event("input")); }
+    }
     else if (action === "pick-currency") { el("set-currency").value = b.dataset.value; updateModeHelp(); }
     else if (action === "open-tx") { openTxSheet(b.dataset.id); }
     else if (action === "sheet-close") { closeTxSheet(); }
@@ -1142,7 +1175,8 @@
     else if (action === "submit-transaction") {
       var amt = parseFloat(addAmountValue) || 0;
       if (amt > 0) {
-        addManualTransaction(amt, isDeposit, addDateValue);
+        addManualTransaction(amt, isDeposit, addDateValue, addNoteValue);
+        addNoteValue = "";
         addAmountValue = "";
         addDateValue = "";
         justBooked = true;
