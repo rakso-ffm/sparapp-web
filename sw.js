@@ -1,5 +1,5 @@
 // Bei Änderungen an index.html o.ä. die Version hochzählen, damit Geräte neu laden.
-const CACHE = "sparkonto-v2";
+const CACHE = "sparkonto-v3";
 const SHELL = [
   "./",
   "index.html",

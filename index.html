@@ -164,6 +164,9 @@
   .danger-box { border: 1.5px solid var(--danger); border-radius: 14px; padding: 16px; background: var(--danger-soft); }
   .confirm-row { display: flex; gap: 10px; margin-top: 12px; }
   .confirm-row .btn { flex: 1; }
+  .mode-help { background: var(--surface-2); border-radius: 12px; padding: 10px 12px; font-size: 13.5px; line-height: 1.45; }
+  .mode-help p { margin: 0; }
+  .mode-help p + p { margin-top: 6px; }
   .footnote { font-size: 12px; color: var(--muted); text-align: center; margin-top: 4px; }
 
   /* --- Tab bar --- */
@@ -413,6 +416,36 @@
     if (!d.value) d.value = toISO(lastWeekdayOnOrBefore(new Date(), 6));
   }
 
+  function modeHelpHTML(mode, fixed, percent) {
+    var cur = state.settings.currencySymbol;
+    var base = computeBalance();
+    var f = function (n) { return formatNumber(n) + " " + cur; };
+    var text, example;
+    if (mode === "fixed") {
+      text = "Jeden Samstag kommt derselbe Betrag dazu. Das Guthaben wächst gleichmäßig.";
+      example = f(base) + " + " + f(fixed) + " = <b>" + f(round2(base + fixed)) + "</b>";
+    } else if (mode === "percentage") {
+      var i = round2(base * percent / 100);
+      text = "Jeden Samstag gibt es Zinsen auf das ganze Guthaben. Weil die Zinsen danach mitverzinst werden, wächst das Guthaben mit der Zeit immer schneller (Zinseszins).";
+      example = f(base) + " × " + formatNumber(percent) + " % = " + f(i) + " Zinsen → <b>" + f(round2(base + i)) + "</b>";
+    } else {
+      var mid = round2(base + fixed);
+      var i2 = round2(mid * percent / 100);
+      text = "Jeden Samstag kommt zuerst der Fixbetrag dazu, danach gibt es Zinsen auf das neue Guthaben. So zahlt sich Sparen doppelt aus.";
+      example = f(base) + " + " + f(fixed) + " = " + f(mid) + ", davon " + formatNumber(percent) + " % = " + f(i2) + " Zinsen → <b>" + f(round2(mid + i2)) + "</b>";
+    }
+    return '<p>' + text + '</p>' +
+      '<p><span class="muted">Beispiel mit dem aktuellen Guthaben:</span><br>' + example + '</p>' +
+      '<p class="muted">Änderungen gelten ab der nächsten Buchung am ' + formatDate(toISO(nextBookingDate())) + '. Bereits gebuchte Wochen bleiben, wie sie sind.</p>';
+  }
+  function updateModeHelp() {
+    var box = el("settings-mode-help");
+    if (!box) return;
+    box.innerHTML = modeHelpHTML(el("set-mode").value,
+      round2(Math.max(0, parseFloat(el("set-fixed").value) || 0)),
+      round2(Math.max(0, parseFloat(el("set-percent").value) || 0)));
+  }
+
   function ruleDescription(s) {
     if (s.interestMode === "fixed") return "+" + formatNumber(s.weeklyFixedAmount) + " " + s.currencySymbol + " pro Woche";
     if (s.interestMode === "percentage") return "+" + formatNumber(s.weeklyInterestPercent) + " % pro Woche";
@@ -564,6 +597,7 @@
             '<option value="combined"' + (s.interestMode === "combined" ? " selected" : "") + '>Fixbetrag + Prozent</option>' +
           '</select>' +
         '</div>' +
+        '<div class="mode-help" id="settings-mode-help"></div>' +
         '<div id="settings-percent-group"' + (s.interestMode === "fixed" ? " hidden" : "") + '>' +
           '<div class="field-label">Zins % / Woche</div><input type="number" id="set-percent" min="0" step="0.5" value="' + s.weeklyInterestPercent + '">' +
         '</div>' +
@@ -587,7 +621,11 @@
 
     el("set-mode").addEventListener("change", function (e) {
       el("settings-percent-group").hidden = (e.target.value === "fixed");
+      updateModeHelp();
     });
+    el("set-fixed").addEventListener("input", updateModeHelp);
+    el("set-percent").addEventListener("input", updateModeHelp);
+    updateModeHelp();
   }
 
   function handleSettingsSave() {
