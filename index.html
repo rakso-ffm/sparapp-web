@@ -177,6 +177,19 @@
   .bar-labels { display: flex; gap: 8px; min-width: 100%; margin-top: 6px; }
   .bar-labels span { flex: 1 0 34px; max-width: 64px; text-align: center; font-size: 11px; font-weight: 700; color: var(--muted); }
   .bar-labels span.selected { color: var(--text); }
+  .forecast-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+  .forecast-label { font-size: 13px; font-weight: 800; color: var(--muted); }
+  .segmented { display: inline-flex; background: var(--surface-2); border-radius: 999px; padding: 3px; gap: 2px; }
+  .segmented button {
+    border: none; background: none; border-radius: 999px; padding: 7px 11px; min-height: 34px;
+    font-size: 13px; font-weight: 800; color: var(--muted); font-family: inherit;
+  }
+  .segmented button.active { background: var(--surface); color: var(--accent-strong); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  .bar.forecast .seg-saved { background: repeating-linear-gradient(135deg, var(--accent) 0 5px, var(--accent-soft) 5px 9px); }
+  .bar.forecast .seg-interest { background: repeating-linear-gradient(135deg, var(--gold) 0 5px, var(--gold-soft) 5px 9px); }
+  .bar-labels span.forecast { font-weight: 600; }
+  .today-divider { flex: 0 0 0; align-self: stretch; border-left: 2px dashed var(--border); margin: 0 -1px; }
+  .legend i.striped { background: repeating-linear-gradient(135deg, var(--accent) 0 3px, var(--accent-soft) 3px 5px); }
   .legend { display: flex; gap: 16px; justify-content: center; margin-top: 12px; font-size: 12.5px; font-weight: 700; color: var(--muted); }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
   .week-info { margin-top: 14px; background: var(--surface-2); border-radius: 14px; padding: 14px; }
@@ -339,7 +352,7 @@
   "use strict";
 
   var STORAGE_KEY = "sparapp_tablet_v1";
-  var APP_VERSION = "7";
+  var APP_VERSION = "8";
   var TITLES = { balance: "Kontostand", add: "Buchen", history: "Verlauf", settings: "Eltern-Zugang" };
   var TYPE_LABEL = {
     initial: "Startguthaben",
@@ -368,6 +381,7 @@
   var savedToast = false;
   var selectedWeek = null;   // ISO-Datum des Wochenbeginns im Verlauf
   var animateChart = false;
+  var forecastWeeks = 4;    // Vorschau im Verlauf: 0, 4, 13 oder 52 Wochen
 
   // ---------- storage ----------
   function loadState() {
@@ -641,6 +655,31 @@
     return buckets;
   }
 
+  // Vorschau: ab der nächsten Gutschrift mit der aktuellen Sparregel weiterrechnen, ohne Ausgaben.
+  function forecastBuckets(past, weeks) {
+    var s = state.settings, last = past[past.length - 1];
+    var balance = last.balance, interestTotal = last.interestTotal, out = [];
+    var cursor = addDays(parseISO(last.key), 7);
+    for (var i = 0; i < weeks; i++) {
+      var b = { key: toISO(cursor), txs: [], forecast: true, initial: 0, base: 0, interest: 0, deposit: 0, withdrawal: 0 };
+      if (s.interestMode !== "percentage" && s.weeklyFixedAmount > 0) { b.base = s.weeklyFixedAmount; balance = round2(balance + b.base); }
+      if (s.interestMode !== "fixed" && s.weeklyInterestPercent > 0) {
+        b.interest = round2(Math.max(0, balance) * s.weeklyInterestPercent / 100);
+        balance = round2(balance + b.interest); interestTotal = round2(interestTotal + b.interest);
+      }
+      b.balance = balance; b.interestTotal = interestTotal;
+      out.push(b);
+      cursor = addDays(cursor, 7);
+    }
+    return out;
+  }
+  function allBuckets() {
+    var past = weekBuckets();
+    if (!past.length) return past;
+    past[past.length - 1].current = true;
+    return past.concat(forecastBuckets(past, forecastWeeks));
+  }
+
   function weekInfoHTML(buckets, idx) {
     var b = buckets[idx], cur = state.settings.currencySymbol;
     var chips = [];
@@ -650,14 +689,20 @@
     if (b.deposit) chips.push('<span class="week-chip base">+' + formatNumber(b.deposit) + ' eingezahlt</span>');
     if (b.withdrawal) chips.push('<span class="week-chip neg">−' + formatNumber(b.withdrawal) + ' ausgegeben</span>');
     var msg;
-    if (b.initial) msg = "Hier hat alles angefangen!";
+    if (b.forecast) {
+      var cur0 = buckets.filter(function (x) { return x.current; })[0];
+      var gain = round2(b.balance - cur0.balance), gainInterest = round2(b.interestTotal - cur0.interestTotal);
+      msg = "Vorschau: So viel hast du dann, wenn du bis dahin nichts ausgibst. Das sind " + formatNumber(gain) + " " + cur + " mehr als heute" +
+        (gainInterest > 0 ? ", davon " + formatNumber(gainInterest) + " " + cur + " durch Zinsen." : ".");
+    }
+    else if (b.initial) msg = "Hier hat alles angefangen!";
     else if (b.interest) msg = "Deine Zinsen haben diese Woche " + formatNumber(b.interest) + " " + cur + " für dich verdient.";
     else if (b.withdrawal) msg = "Diese Woche hast du etwas ausgegeben.";
     else if (!b.txs.length) msg = "Diese Woche ist noch nichts passiert.";
     else msg = "Weiter so!";
-    var title = idx === buckets.length - 1 ? "Diese Woche" : "Woche ab " + formatDateWeekday(b.key);
+    var title = b.current ? "Diese Woche" : (b.forecast ? "Vorschau: " : "") + "Woche ab " + formatDateWeekday(b.key);
     return '<div class="week-info-head"><div class="week-info-title">' + title + '</div>' +
-        '<div class="week-info-balance">' + formatAmount(b.balance) + '</div></div>' +
+        '<div class="week-info-balance">' + (b.forecast ? "≈ " : "") + formatAmount(b.balance) + '</div></div>' +
       (chips.length ? '<div class="week-chips">' + chips.join("") + '</div>' : "") +
       '<div class="week-msg">' + msg + '</div>' +
       '<div class="week-nav">' +
@@ -667,9 +712,9 @@
   }
 
   function buildChart() {
-    var buckets = weekBuckets();
-    if (buckets.length < 2) return '<div class="chart-empty muted">Noch keine Entwicklung – bald wächst hier dein Guthaben.</div>';
-    var last = buckets[buckets.length - 1];
+    var buckets = allBuckets();
+    if (!buckets.length) return '<div class="chart-empty muted">Noch keine Entwicklung – bald wächst hier dein Guthaben.</div>';
+    var last = buckets.filter(function (b) { return b.current; })[0];
     if (!selectedWeek || !buckets.some(function (b) { return b.key === selectedWeek; })) selectedWeek = last.key;
     var maxV = Math.max.apply(null, buckets.map(function (b) { return b.balance; })) || 1;
     var bars = "", labels = "";
@@ -678,15 +723,20 @@
       var h = bal > 0 ? Math.max(4, bal / maxV * 100) : 1.5;
       var interestPart = bal > 0 ? Math.min(1, b.interestTotal / bal) : 0;
       var sel = b.key === selectedWeek ? " selected" : "";
+      var fc = b.forecast ? " forecast" : "";
       var d = parseISO(b.key);
-      bars += '<button class="bar' + sel + '" data-action="select-week" data-week="' + b.key + '" style="--h:' + h.toFixed(1) + '%" aria-label="Woche ab ' + formatDate(b.key) + ': ' + formatAmount(b.balance) + '">' +
-          '<span class="bar-value">' + formatNumber(b.balance) + '</span>' +
+      if (b.forecast && b === buckets[buckets.indexOf(last) + 1]) {
+        bars += '<span class="today-divider" aria-hidden="true"></span>';
+        labels += '<span class="today-divider" aria-hidden="true"></span>';
+      }
+      bars += '<button class="bar' + sel + fc + '" data-action="select-week" data-week="' + b.key + '" style="--h:' + h.toFixed(1) + '%" aria-label="' + (b.forecast ? "Vorschau " : "") + 'Woche ab ' + formatDate(b.key) + ': ' + formatAmount(b.balance) + '">' +
+          '<span class="bar-value">' + (b.forecast ? "≈ " : "") + formatNumber(b.balance) + '</span>' +
           '<span class="bar-stack">' +
             (interestPart > 0 ? '<span class="seg-interest" style="height:' + (interestPart * 100).toFixed(1) + '%"></span>' : "") +
             '<span class="seg-saved"></span>' +
           '</span>' +
         '</button>';
-      labels += '<span class="' + sel.trim() + '" data-label="' + b.key + '">' + d.getDate() + '.' + (d.getMonth() + 1) + '.</span>';
+      labels += '<span class="' + (sel + fc).trim() + '" data-label="' + b.key + '">' + d.getDate() + '.' + (d.getMonth() + 1) + '.</span>';
     });
     var idx = buckets.findIndex(function (b) { return b.key === selectedWeek; });
     var saved = round2(last.balance - last.interestTotal);
@@ -695,16 +745,23 @@
         '<div class="sum-chip saved"><div class="sum-label">Selbst gespart</div><div class="sum-value">' + formatNumber(saved) + '</div></div>' +
         '<div class="sum-chip interest"><div class="sum-label">Von Zinsen geschenkt</div><div class="sum-value">' + formatNumber(last.interestTotal) + '</div></div>' +
       '</div>' +
+      '<div class="forecast-row"><span class="forecast-label">Blick in die Zukunft</span>' +
+        '<div class="segmented" role="group" aria-label="Vorschau">' +
+          [[0, "Aus"], [4, "4 Wochen"], [13, "3 Monate"], [52, "1 Jahr"]].map(function (o) {
+            return '<button data-action="set-forecast" data-weeks="' + o[0] + '"' + (forecastWeeks === o[0] ? ' class="active"' : '') + '>' + o[1] + '</button>';
+          }).join("") +
+        '</div></div>' +
       '<div class="bars-scroll" id="bars-scroll">' +
         '<div class="bars' + (animateChart ? " grow" : "") + '" id="bars">' + bars + '</div>' +
         '<div class="bar-labels">' + labels + '</div>' +
       '</div>' +
-      '<div class="legend"><span><i style="background:var(--accent)"></i>Dein Geld</span><span><i style="background:var(--gold)"></i>Zinsen</span></div>' +
+      '<div class="legend"><span><i style="background:var(--accent)"></i>Dein Geld</span><span><i style="background:var(--gold)"></i>Zinsen</span>' +
+        (forecastWeeks ? '<span><i class="striped"></i>Vorschau</span>' : '') + '</div>' +
       '<div class="week-info" id="week-info">' + weekInfoHTML(buckets, idx) + '</div>';
   }
 
   function selectWeek(key) {
-    var buckets = weekBuckets();
+    var buckets = allBuckets();
     var idx = buckets.findIndex(function (b) { return b.key === key; });
     if (idx < 0) return;
     selectedWeek = key;
@@ -963,6 +1020,12 @@
       activeTab = b.dataset.tab; refreshUI();
     }
     else if (action === "select-week") { selectWeek(b.dataset.week); }
+    else if (action === "set-forecast") {
+      forecastWeeks = Number(b.dataset.weeks);
+      var fb = allBuckets();
+      selectedWeek = fb[fb.length - 1].key;   // Ergebnis der Vorschau direkt zeigen
+      refreshUI();
+    }
     else if (action === "open-tx") { openTxSheet(b.dataset.id); }
     else if (action === "sheet-close") { closeTxSheet(); }
     else if (action === "sheet-backdrop") { if (e.target === b) closeTxSheet(); }
@@ -972,7 +1035,7 @@
     else if (action === "edit-delete-cancel") { confirmDelete = false; refreshUI(); }
     else if (action === "edit-delete-confirm") { deleteTx(); }
     else if (action === "week-step") {
-      var wb = weekBuckets();
+      var wb = allBuckets();
       var wi = wb.findIndex(function (x) { return x.key === selectedWeek; }) + Number(b.dataset.step);
       if (wi >= 0 && wi < wb.length) selectWeek(wb[wi].key);
     }
