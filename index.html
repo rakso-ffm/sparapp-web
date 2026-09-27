@@ -411,7 +411,7 @@
   "use strict";
 
   var STORAGE_KEY = "sparapp_tablet_v1";
-  var APP_VERSION = "15";
+  var APP_VERSION = "16";
   var TITLES = { balance: "Kontostand", add: "Buchen", history: "Verlauf", settings: "Eltern-Zugang" };
   var TYPE_LABEL = {
     initial: "Startguthaben",
@@ -1290,7 +1290,12 @@
         '<div id="settings-percent-group"' + (s.interestMode === "fixed" ? " hidden" : "") + '>' +
           '<div class="field-label">Zins % / Monat</div><input type="number" id="set-percent" min="0" step="0.5" value="' + s.monthlyInterestPercent + '">' +
         '</div>' +
-        '<button class="btn btn-primary btn-block" data-action="settings-save">Speichern</button>' +
+        '<button class="btn btn-primary btn-block" data-action="settings-save">Speichern (ab jetzt)</button>' +
+        '<button class="btn btn-ghost btn-block" id="retro-btn" data-action="retro-open">Rückwirkend ab Start anwenden…</button>' +
+        '<div class="mode-help" id="retro-box" hidden><p><b>Rückwirkend ab ' + formatDate(s.startDate) + ' neu berechnen?</b></p>' +
+          '<p class="muted">Taschengeld und Zinsen seit dem Start werden mit den Regeln oben neu gebucht. Eigene Ein- und Auszahlungen bleiben erhalten.</p>' +
+          '<div class="confirm-row"><button class="btn btn-ghost" data-action="retro-cancel">Abbrechen</button>' +
+          '<button class="btn btn-primary" data-action="retro-confirm">Neu berechnen</button></div></div>' +
         '<div class="toast">' + (savedToast ? "Gespeichert ✓" : "") + '</div>' +
       '</div>' +
       '<div class="card stack">' +
@@ -1324,13 +1329,26 @@
     return v || "Credits";
   }
 
-  function handleSettingsSave() {
+  // Alle automatischen Buchungen verwerfen und ab dem Startdatum mit den aktuellen Regeln neu buchen.
+  function reapplyRulesFromStart() {
+    var s = state.settings;
+    state.transactions = state.transactions.filter(function (t) {
+      return ["weeklyBase", "weeklyInterest", "monthlyInterest"].indexOf(t.type) < 0;
+    });
+    s.lastAutoBookingDate = null;
+    s.lastInterestDate = null;
+    catchUp();
+    saveState();
+  }
+
+  function handleSettingsSave(retro) {
     var s = state.settings;
     s.currencySymbol = cleanCurrency(el("set-currency").value);
     s.weeklyFixedAmount = round2(Math.max(0, parseFloat(el("set-fixed").value) || 0));
     s.interestMode = el("set-mode").value;
     var percentField = el("set-percent");
     s.monthlyInterestPercent = percentField ? round2(Math.max(0, parseFloat(percentField.value) || 0)) : 0;
+    if (retro) reapplyRulesFromStart();
     saveState();
     savedToast = true;
     refreshUI();
@@ -1398,7 +1416,12 @@
       }
     }
     else if (action === "pin-digit") { await handlePinDigit(b.dataset.digit); }
-    else if (action === "settings-save") { handleSettingsSave(); }
+    else if (action === "settings-save") { handleSettingsSave(false); }
+    else if (action === "retro-open" || action === "retro-cancel") {
+      el("retro-box").hidden = action === "retro-cancel";
+      el("retro-btn").hidden = action === "retro-open";
+    }
+    else if (action === "retro-confirm") { handleSettingsSave(true); }
     else if (action === "change-pin-start") { pinMode = "set-new-1"; pinBuffer = ""; pendingNewPin = ""; pinError = false; refreshUI(); }
     else if (action === "reset-open") { showResetConfirm = true; refreshUI(); }
     else if (action === "reset-cancel") { showResetConfirm = false; refreshUI(); }
