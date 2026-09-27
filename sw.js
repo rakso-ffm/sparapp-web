@@ -1,5 +1,5 @@
 // Bei Änderungen an index.html o.ä. die Version hochzählen (auch APP_VERSION in index.html).
-const CACHE = "sparkonto-v8";
+const CACHE = "sparkonto-v9";
 const SHELL = [
   "./",
   "index.html",

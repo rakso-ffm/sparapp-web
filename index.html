@@ -71,12 +71,12 @@
   .muted { color: var(--muted); }
   .field-label { font-size: 12px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
 
-  input[type="number"], input[type="date"], select {
+  input[type="number"], input[type="date"], input[type="text"], select {
     width: 100%; min-height: 48px; padding: 10px 14px; border-radius: 12px;
     border: 1.5px solid var(--border); background: var(--surface-2); color: var(--text);
     font-size: 16px; font-weight: 600;
   }
-  input[type="number"]:focus, input[type="date"]:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  input[type="number"]:focus, input[type="date"]:focus, input[type="text"]:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
   .btn {
     min-height: 48px; border-radius: 12px; border: none; padding: 0 18px;
@@ -137,6 +137,11 @@
   .sheet-title { font-family: "Baloo 2", sans-serif; font-size: 20px; font-weight: 700; }
   .sheet-close { background: var(--surface-2); border: none; border-radius: 999px; width: 36px; height: 36px; font-size: 18px; color: var(--muted); }
   .sheet-note { font-size: 13.5px; line-height: 1.45; }
+  .currency-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .currency-chips button {
+    border: 1.5px solid var(--border); background: var(--surface); border-radius: 999px; padding: 6px 12px;
+    min-height: 36px; font-size: 15px; font-weight: 700; color: var(--text); font-family: inherit;
+  }
   .date-hint { font-size: 13px; font-weight: 700; margin-top: 6px; min-height: 18px; }
   .toast { text-align: center; font-size: 13.5px; font-weight: 700; color: var(--accent); min-height: 18px; }
 
@@ -299,8 +304,9 @@
         </select>
       </div>
       <div id="ob-percent-group">
-        <div class="field-label">Zins % / Woche</div>
-        <input type="number" id="ob-percent" min="0" step="0.5" value="1">
+        <div class="field-label">Zins % / Monat</div>
+        <input type="number" id="ob-percent" min="0" step="0.5" value="5">
+        <div class="date-hint muted">Zinsen gibt es immer am 1. des Monats.</div>
       </div>
       <button class="btn btn-primary btn-block" data-action="onboarding-submit">Los geht's</button>
       <p class="footnote">Alle Daten bleiben nur auf diesem Tablet gespeichert. · Version <span class="app-version"></span></p>
@@ -352,12 +358,13 @@
   "use strict";
 
   var STORAGE_KEY = "sparapp_tablet_v1";
-  var APP_VERSION = "8";
+  var APP_VERSION = "9";
   var TITLES = { balance: "Kontostand", add: "Buchen", history: "Verlauf", settings: "Eltern-Zugang" };
   var TYPE_LABEL = {
     initial: "Startguthaben",
     weeklyBase: "Wöchentlicher Betrag",
     weeklyInterest: "Zinsen",
+    monthlyInterest: "Zinsen",
     deposit: "Einzahlung",
     withdrawal: "Auszahlung"
   };
@@ -422,34 +429,57 @@
   function signedAmount(tx) { return tx.type === "withdrawal" ? -tx.amount : tx.amount; }
   function computeBalance() { return round2(state.transactions.reduce(function (sum, t) { return sum + signedAmount(t); }, 0)); }
 
+  function firstOfNextMonth(d) { return new Date(d.getFullYear(), d.getMonth() + 1, 1); }
+
+  // Taschengeld jeden Samstag, Zinsen am 1. jedes Monats (Zinstag) auf das Guthaben vom Monatsende.
   function catchUp() {
     if (!state.settings) return;
     var s = state.settings;
-    var cursor = s.lastAutoBookingDate ? addDays(parseISO(s.lastAutoBookingDate), 7) : nextWeekdayOnOrAfter(parseISO(s.startDate), s.bookingWeekday);
     var today = startOfDay(new Date());
-    var balance = computeBalance();
-    var changed = false;
-    while (cursor <= today) {
-      changed = true;
+    var firstNew = null, newInterest = [];
+    for (var cursor = nextBookingDate(); cursor <= today; cursor = addDays(cursor, 7)) {
+      var iso = toISO(cursor);
       if (s.interestMode !== "percentage" && s.weeklyFixedAmount > 0) {
-        balance = round2(balance + s.weeklyFixedAmount);
-        state.transactions.push({ id: uid(), type: "weeklyBase", amount: s.weeklyFixedAmount, date: toISO(cursor) });
+        state.transactions.push({ id: uid(), type: "weeklyBase", amount: s.weeklyFixedAmount, date: iso });
       }
-      if (s.interestMode !== "fixed" && s.weeklyInterestPercent > 0) {
-        var interest = round2(balance * s.weeklyInterestPercent / 100);
-        if (interest > 0) {
-          balance = round2(balance + interest);
-          state.transactions.push({ id: uid(), type: "weeklyInterest", amount: interest, date: toISO(cursor), rate: s.weeklyInterestPercent });
-        }
-      }
-      s.lastAutoBookingDate = toISO(cursor);
-      cursor = addDays(cursor, 7);
+      s.lastAutoBookingDate = iso;
+      if (!firstNew) firstNew = iso;
     }
-    if (changed) saveState();
+    for (var m = nextInterestDate(); m <= today; m = firstOfNextMonth(m)) {
+      var mIso = toISO(m);
+      if (s.interestMode !== "fixed" && s.monthlyInterestPercent > 0) {
+        var tx = { id: uid(), type: "monthlyInterest", amount: 0, date: mIso, rate: s.monthlyInterestPercent };
+        state.transactions.push(tx); newInterest.push(tx);
+      }
+      s.lastInterestDate = mIso;
+      if (!firstNew || mIso < firstNew) firstNew = mIso;
+    }
+    if (!firstNew) return;
+    recalcInterestFrom(firstNew);
+    // Zinstag ohne Guthaben: keine Null-Buchung stehen lassen
+    state.transactions = state.transactions.filter(function (t) { return newInterest.indexOf(t) < 0 || t.amount > 0; });
+    saveState();
+  }
+
+  // Alte Version hatte Wochenzinsen: Satz an den alten Buchungen festhalten, Zahl als Monatssatz übernehmen,
+  // neue Regel gilt ab dem nächsten Monatsersten.
+  function migrateSettings() {
+    var s = state.settings;
+    if (!s || s.monthlyInterestPercent !== undefined) return;
+    var legacy = s.weeklyInterestPercent || 0, balance = 0;
+    chronological().forEach(function (t) {
+      if (t.type === "weeklyInterest" && t.rate === undefined) t.rate = inferRate(t, balance, legacy);
+      balance = round2(balance + signedAmount(t));
+    });
+    s.monthlyInterestPercent = legacy;
+    delete s.weeklyInterestPercent;
+    var now = new Date();
+    s.lastInterestDate = toISO(new Date(now.getFullYear(), now.getMonth(), 1));
+    saveState();
   }
 
   // Reihenfolge innerhalb eines Tages: Start, Taschengeld, Zinsen, dann manuelle Buchungen.
-  var TYPE_RANK = { initial: 0, weeklyBase: 1, weeklyInterest: 2, deposit: 3, withdrawal: 3 };
+  var TYPE_RANK = { initial: 0, monthlyInterest: 1, weeklyBase: 2, weeklyInterest: 3, deposit: 4, withdrawal: 4 };
   function chronological() {
     return state.transactions.map(function (t, i) { return { t: t, i: i }; })
       .sort(function (a, b) { return a.t.date.localeCompare(b.t.date) || TYPE_RANK[a.t.type] - TYPE_RANK[b.t.type] || a.i - b.i; })
@@ -457,20 +487,21 @@
   }
 
   // Zinssatz einer älteren Zinsbuchung ohne gespeicherten Satz aus Betrag und Vorher-Guthaben ableiten.
-  function inferRate(tx, balanceBefore) {
-    var s = state.settings;
-    if (balanceBefore <= 0) return s.weeklyInterestPercent;
-    if (round2(balanceBefore * s.weeklyInterestPercent / 100) === tx.amount) return s.weeklyInterestPercent;
+  function inferRate(tx, balanceBefore, pct) {
+    if (balanceBefore <= 0) return pct;
+    if (round2(balanceBefore * pct / 100) === tx.amount) return pct;
     return round2(tx.amount / balanceBefore * 100);
   }
 
   // Nach Änderungen an früheren Buchungen: Zinsbuchungen ab fromISO mit dem damaligen Satz neu berechnen.
+  // Monatszinsen zählen das Guthaben vor dem Zinstag (Monatsende), alte Wochenzinsen das Guthaben direkt davor.
   function recalcInterestFrom(fromISO) {
-    var balance = 0;
+    var balance = 0, day = null, dayStart = 0;
     chronological().forEach(function (t) {
-      if (t.type === "weeklyInterest") {
-        if (t.rate === undefined) t.rate = inferRate(t, balance);
-        if (t.date >= fromISO) t.amount = round2(Math.max(0, balance) * t.rate / 100);
+      if (t.date !== day) { day = t.date; dayStart = balance; }
+      if (t.date >= fromISO) {
+        if (t.type === "monthlyInterest") t.amount = round2(Math.max(0, dayStart) * t.rate / 100);
+        else if (t.type === "weeklyInterest" && t.rate !== undefined) t.amount = round2(Math.max(0, balance) * t.rate / 100);
       }
       balance = round2(balance + signedAmount(t));
     });
@@ -480,11 +511,37 @@
     var s = state.settings;
     return s.lastAutoBookingDate ? addDays(parseISO(s.lastAutoBookingDate), 7) : nextWeekdayOnOrAfter(parseISO(s.startDate), s.bookingWeekday);
   }
+  function nextInterestDate() {
+    var s = state.settings;
+    return firstOfNextMonth(parseISO(s.lastInterestDate || s.startDate));
+  }
+  function interestActive(mode, pct) { return mode !== "fixed" && pct > 0; }
+
+  // Künftige Gutschriften durchrechnen (ohne Ausgaben). Am selben Tag zuerst Zinsen, dann Taschengeld.
+  function simulateEvents(balance, rule, endDate) {
+    var ev = [];
+    if (rule.mode !== "percentage" && rule.fixed > 0)
+      for (var d = rule.nextBase; d <= endDate; d = addDays(d, 7)) ev.push({ date: d, kind: "base" });
+    if (interestActive(rule.mode, rule.pct))
+      for (var m = rule.nextInterest; m <= endDate; m = firstOfNextMonth(m)) ev.push({ date: m, kind: "interest" });
+    ev.sort(function (a, b) { return a.date - b.date || (a.kind === "interest" ? -1 : 1); });
+    ev.forEach(function (e) {
+      e.amount = e.kind === "base" ? rule.fixed : round2(Math.max(0, balance) * rule.pct / 100);
+      balance = round2(balance + e.amount);
+      e.balance = balance;
+    });
+    return ev;
+  }
+  function currentRule() {
+    var s = state.settings;
+    return { mode: s.interestMode, fixed: s.weeklyFixedAmount, pct: s.monthlyInterestPercent, nextBase: nextBookingDate(), nextInterest: nextInterestDate() };
+  }
 
   function completeOnboarding(startBalance, startDateISO, weeklyAmount, interestMode, interestPercent) {
     state.settings = {
       weeklyFixedAmount: round2(Math.max(0, weeklyAmount)),
-      weeklyInterestPercent: interestMode === "fixed" ? 0 : round2(Math.max(0, interestPercent)),
+      monthlyInterestPercent: interestMode === "fixed" ? 0 : round2(Math.max(0, interestPercent)),
+      lastInterestDate: null,
       interestMode: interestMode,
       bookingWeekday: 6,
       startDate: startDateISO,
@@ -541,26 +598,32 @@
   }
 
   function modeHelpHTML(mode, fixed, percent) {
-    var cur = state.settings.currencySymbol;
+    var cur = el("set-currency") ? cleanCurrency(el("set-currency").value) : state.settings.currencySymbol;
     var base = computeBalance();
     var f = function (n) { return formatNumber(n) + " " + cur; };
+    var zinstag = formatDate(toISO(nextInterestDate()));
     var text, example;
     if (mode === "fixed") {
       text = "Jeden Samstag kommt derselbe Betrag dazu. Das Guthaben wächst gleichmäßig.";
       example = f(base) + " + " + f(fixed) + " = <b>" + f(round2(base + fixed)) + "</b>";
-    } else if (mode === "percentage") {
-      var i = round2(base * percent / 100);
-      text = "Jeden Samstag gibt es Zinsen auf das ganze Guthaben. Weil die Zinsen danach mitverzinst werden, wächst das Guthaben mit der Zeit immer schneller (Zinseszins).";
-      example = f(base) + " × " + formatNumber(percent) + " % = " + f(i) + " Zinsen → <b>" + f(round2(base + i)) + "</b>";
     } else {
-      var mid = round2(base + fixed);
-      var i2 = round2(mid * percent / 100);
-      text = "Jeden Samstag kommt zuerst der Fixbetrag dazu, danach gibt es Zinsen auf das neue Guthaben. So zahlt sich Sparen doppelt aus.";
-      example = f(base) + " + " + f(fixed) + " = " + f(mid) + ", davon " + formatNumber(percent) + " % = " + f(i2) + " Zinsen → <b>" + f(round2(mid + i2)) + "</b>";
+      var i = round2(base * percent / 100);
+      text = (mode === "percentage" ? "Es gibt kein festes Taschengeld. " : "Jeden Samstag kommt der Fixbetrag dazu. ") +
+        "Am 1. jedes Monats ist Zinstag: Dann gibt es Zinsen auf das Guthaben vom Monatsende. Weil die Zinsen danach mitverzinst werden, wächst das Guthaben mit der Zeit immer schneller (Zinseszins).";
+      example = "Wenn am Monatsende " + f(base) + " auf dem Konto sind: " + formatNumber(percent) + " % = <b>" + f(i) + " Zinsen</b>";
     }
+    var rule = { mode: mode, fixed: fixed, pct: percent, nextBase: nextBookingDate(), nextInterest: nextInterestDate() };
+    var year = simulateEvents(base, rule, addDays(startOfDay(new Date()), 365));
+    var sumBase = 0, sumInterest = 0;
+    year.forEach(function (e) { if (e.kind === "base") sumBase = round2(sumBase + e.amount); else sumInterest = round2(sumInterest + e.amount); });
+    var cost = [];
+    if (sumBase) cost.push(f(sumBase) + " Taschengeld");
+    if (sumInterest) cost.push("≈ " + f(sumInterest) + " Zinsen");
     return '<p>' + text + '</p>' +
       '<p><span class="muted">Beispiel mit dem aktuellen Guthaben:</span><br>' + example + '</p>' +
-      '<p class="muted">Änderungen gelten ab der nächsten Buchung am ' + formatDate(toISO(nextBookingDate())) + '. Bereits gebuchte Wochen bleiben, wie sie sind.</p>';
+      (cost.length ? '<p><span class="muted">Im nächsten Jahr sind das zusammen:</span><br><b>' + cost.join(" + ") + '</b><br><span class="muted">(wenn nichts ausgegeben wird)</span></p>' : '') +
+      '<p class="muted">Änderungen gelten ab der nächsten Buchung: Taschengeld am ' + formatDate(toISO(nextBookingDate())) +
+        (interestActive(mode, percent) ? ", Zinsen am " + zinstag : "") + '. Bereits gebuchte bleiben, wie sie sind.</p>';
   }
   function updateModeHelp() {
     var box = el("settings-mode-help");
@@ -572,8 +635,8 @@
 
   function ruleDescription(s) {
     if (s.interestMode === "fixed") return "+" + formatNumber(s.weeklyFixedAmount) + " " + s.currencySymbol + " pro Woche";
-    if (s.interestMode === "percentage") return "+" + formatNumber(s.weeklyInterestPercent) + " % pro Woche";
-    return "+" + formatNumber(s.weeklyFixedAmount) + " " + s.currencySymbol + " & +" + formatNumber(s.weeklyInterestPercent) + " %";
+    if (s.interestMode === "percentage") return "+" + formatNumber(s.monthlyInterestPercent) + " % Zinsen im Monat";
+    return "+" + formatNumber(s.weeklyFixedAmount) + " " + s.currencySymbol + " pro Woche & " + formatNumber(s.monthlyInterestPercent) + " % Zinsen im Monat";
   }
 
   function renderBalance() {
@@ -585,7 +648,8 @@
         '<div class="balance-amount">' + formatAmount(balance) + '</div>' +
         '<div class="balance-since muted">seit ' + formatDate(state.transactions[0].date) + '</div>' +
         '<div class="rule-pill">' + ruleDescription(s) + '</div>' +
-        '<div class="next-booking">Nächste Gutschrift: ' + formatDateWeekday(toISO(nextBookingDate())) + '</div>' +
+        (s.interestMode !== "percentage" ? '<div class="next-booking">Nächstes Taschengeld: ' + formatDateWeekday(toISO(nextBookingDate())) + '</div>' : '') +
+        (interestActive(s.interestMode, s.monthlyInterestPercent) ? '<div class="next-booking">Nächster Zinstag: ' + formatDateWeekday(toISO(nextInterestDate())) + '</div>' : '') +
       '</div>';
   }
 
@@ -642,10 +706,12 @@
       var key = toISO(cursor), txs = byKey[key] || [];
       var b = { key: key, txs: txs, initial: 0, base: 0, interest: 0, deposit: 0, withdrawal: 0 };
       txs.forEach(function (t) {
-        var f = t.type === "weeklyBase" ? "base" : t.type === "weeklyInterest" ? "interest" : t.type;
+        var isInterest = t.type === "weeklyInterest" || t.type === "monthlyInterest";
+        var f = t.type === "weeklyBase" ? "base" : isInterest ? "interest" : t.type;
         b[f] = round2(b[f] + t.amount);
         balance = round2(balance + signedAmount(t));
-        if (t.type === "weeklyInterest") interestTotal = round2(interestTotal + t.amount);
+        if (isInterest) interestTotal = round2(interestTotal + t.amount);
+        if (t.type === "monthlyInterest") b.interestDay = true;
       });
       b.balance = balance;
       b.interestTotal = interestTotal;
@@ -655,22 +721,28 @@
     return buckets;
   }
 
-  // Vorschau: ab der nächsten Gutschrift mit der aktuellen Sparregel weiterrechnen, ohne Ausgaben.
+  // Vorschau: mit der aktuellen Sparregel weiterrechnen, ohne Ausgaben. Was in dieser Woche noch aussteht,
+  // landet in der ersten Vorschau-Woche.
   function forecastBuckets(past, weeks) {
-    var s = state.settings, last = past[past.length - 1];
-    var balance = last.balance, interestTotal = last.interestTotal, out = [];
-    var cursor = addDays(parseISO(last.key), 7);
-    for (var i = 0; i < weeks; i++) {
-      var b = { key: toISO(cursor), txs: [], forecast: true, initial: 0, base: 0, interest: 0, deposit: 0, withdrawal: 0 };
-      if (s.interestMode !== "percentage" && s.weeklyFixedAmount > 0) { b.base = s.weeklyFixedAmount; balance = round2(balance + b.base); }
-      if (s.interestMode !== "fixed" && s.weeklyInterestPercent > 0) {
-        b.interest = round2(Math.max(0, balance) * s.weeklyInterestPercent / 100);
-        balance = round2(balance + b.interest); interestTotal = round2(interestTotal + b.interest);
-      }
-      b.balance = balance; b.interestTotal = interestTotal;
-      out.push(b);
-      cursor = addDays(cursor, 7);
+    var last = past[past.length - 1], lastKey = parseISO(last.key);
+    var out = [];
+    for (var i = 1; i <= weeks; i++) {
+      out.push({ key: toISO(addDays(lastKey, 7 * i)), txs: [], forecast: true, initial: 0, base: 0, interest: 0, deposit: 0, withdrawal: 0 });
     }
+    if (!weeks) return out;
+    var events = simulateEvents(last.balance, currentRule(), addDays(lastKey, 7 * (weeks + 1) - 1));
+    var interestTotal = last.interestTotal, ei = 0;
+    out.forEach(function (b) {
+      var end = addDays(parseISO(b.key), 7);
+      b.balance = ei > 0 ? events[ei - 1].balance : last.balance;
+      while (ei < events.length && events[ei].date < end) {
+        var e = events[ei++];
+        if (e.kind === "base") b.base = round2(b.base + e.amount);
+        else { b.interest = round2(b.interest + e.amount); b.interestDay = true; interestTotal = round2(interestTotal + e.amount); }
+        b.balance = e.balance;
+      }
+      b.interestTotal = interestTotal;
+    });
     return out;
   }
   function allBuckets() {
@@ -696,7 +768,7 @@
         (gainInterest > 0 ? ", davon " + formatNumber(gainInterest) + " " + cur + " durch Zinsen." : ".");
     }
     else if (b.initial) msg = "Hier hat alles angefangen!";
-    else if (b.interest) msg = "Deine Zinsen haben diese Woche " + formatNumber(b.interest) + " " + cur + " für dich verdient.";
+    else if (b.interest) msg = (b.interestDay ? "Zinstag! " : "") + "Deine Zinsen haben " + formatNumber(b.interest) + " " + cur + " für dich verdient.";
     else if (b.withdrawal) msg = "Diese Woche hast du etwas ausgegeben.";
     else if (!b.txs.length) msg = "Diese Woche ist noch nichts passiert.";
     else msg = "Weiter so!";
@@ -782,7 +854,7 @@
 
   function txIcon(type) {
     if (type === "withdrawal") return '<div class="tx-icon neg"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></div>';
-    if (type === "weeklyInterest") return '<div class="tx-icon gold"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M5 12H2M22 12h-3M6 6l2 2M18 6l-2 2M6 18l2-2M18 18l-2-2"/><circle cx="12" cy="12" r="4"/></svg></div>';
+    if (type === "weeklyInterest" || type === "monthlyInterest") return '<div class="tx-icon gold"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M5 12H2M22 12h-3M6 6l2 2M18 6l-2 2M6 18l2-2M18 18l-2-2"/><circle cx="12" cy="12" r="4"/></svg></div>';
     return '<div class="tx-icon pos"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></div>';
   }
 
@@ -837,7 +909,7 @@
       html = head(TYPE_LABEL[t.type]) +
         '<div class="card stack"><div class="sheet-note">' +
           '<b>' + formatAmount(t.amount) + '</b> am ' + formatDate(t.date) +
-          (t.type === "weeklyInterest" && t.rate !== undefined ? ' (' + formatNumber(t.rate) + ' %)' : '') + '.<br>' +
+          (t.rate !== undefined ? ' (' + formatNumber(t.rate) + ' % ' + (t.type === "monthlyInterest" ? "im Monat" : "pro Woche") + ')' : '') + '.<br>' +
           '<span class="muted">Automatisch gebucht. Wird von selbst angepasst, wenn frühere Buchungen geändert werden.</span>' +
         '</div></div>';
     } else if (!settingsUnlocked) {
@@ -958,6 +1030,14 @@
       '<div class="stack">' +
       '<div class="card stack">' +
         '<div class="settings-section-title">Sparregeln</div>' +
+        '<div><div class="field-label">Name der Währung</div>' +
+          '<input type="text" id="set-currency" maxlength="16" autocomplete="off" value="' + s.currencySymbol + '">' +
+          '<div class="currency-chips">' +
+            ["Credits", "Taler", "€", "🪙", "⭐", "💎", "🍪"].map(function (c) {
+              return '<button type="button" data-action="pick-currency" data-value="' + c + '">' + c + '</button>';
+            }).join("") +
+          '</div>' +
+        '</div>' +
         '<div><div class="field-label">Fixbetrag / Woche</div><input type="number" id="set-fixed" min="0" step="1" value="' + s.weeklyFixedAmount + '"></div>' +
         '<div><div class="field-label">Zins-Modus</div>' +
           '<select id="set-mode">' +
@@ -968,7 +1048,7 @@
         '</div>' +
         '<div class="mode-help" id="settings-mode-help"></div>' +
         '<div id="settings-percent-group"' + (s.interestMode === "fixed" ? " hidden" : "") + '>' +
-          '<div class="field-label">Zins % / Woche</div><input type="number" id="set-percent" min="0" step="0.5" value="' + s.weeklyInterestPercent + '">' +
+          '<div class="field-label">Zins % / Monat</div><input type="number" id="set-percent" min="0" step="0.5" value="' + s.monthlyInterestPercent + '">' +
         '</div>' +
         '<button class="btn btn-primary btn-block" data-action="settings-save">Speichern</button>' +
         '<div class="toast">' + (savedToast ? "Gespeichert ✓" : "") + '</div>' +
@@ -993,16 +1073,24 @@
       updateModeHelp();
     });
     el("set-fixed").addEventListener("input", updateModeHelp);
+    el("set-currency").addEventListener("input", updateModeHelp);
     el("set-percent").addEventListener("input", updateModeHelp);
     updateModeHelp();
   }
 
+  // Wird per innerHTML angezeigt: HTML-Zeichen entfernen.
+  function cleanCurrency(v) {
+    v = String(v || "").replace(/[<>&"'`]/g, "").trim().slice(0, 16);
+    return v || "Credits";
+  }
+
   function handleSettingsSave() {
     var s = state.settings;
+    s.currencySymbol = cleanCurrency(el("set-currency").value);
     s.weeklyFixedAmount = round2(Math.max(0, parseFloat(el("set-fixed").value) || 0));
     s.interestMode = el("set-mode").value;
     var percentField = el("set-percent");
-    s.weeklyInterestPercent = percentField ? round2(Math.max(0, parseFloat(percentField.value) || 0)) : 0;
+    s.monthlyInterestPercent = percentField ? round2(Math.max(0, parseFloat(percentField.value) || 0)) : 0;
     saveState();
     savedToast = true;
     refreshUI();
@@ -1026,6 +1114,7 @@
       selectedWeek = fb[fb.length - 1].key;   // Ergebnis der Vorschau direkt zeigen
       refreshUI();
     }
+    else if (action === "pick-currency") { el("set-currency").value = b.dataset.value; updateModeHelp(); }
     else if (action === "open-tx") { openTxSheet(b.dataset.id); }
     else if (action === "sheet-close") { closeTxSheet(); }
     else if (action === "sheet-backdrop") { if (e.target === b) closeTxSheet(); }
@@ -1082,6 +1171,7 @@
     Array.prototype.forEach.call(document.querySelectorAll(".app-version"), function (n) { n.textContent = APP_VERSION; });
     state = loadState() || { transactions: [], settings: null, pinHash: null };
     if (!state.pinHash) { state.pinHash = await sha256Hex("0000"); saveState(); }
+    migrateSettings();
     if (state.settings) catchUp();
     refreshUI();
   }
