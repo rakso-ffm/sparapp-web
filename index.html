@@ -171,6 +171,7 @@
   }
   .bars.grow .bar-stack { height: 0; }
   .bar.selected .bar-stack { opacity: 1; transform: scaleX(1.08); }
+  @media (hover: hover) { .bar:hover .bar-stack { opacity: .9; } }
   .bar:active .bar-stack { transform: scaleX(.94); }
   .seg-saved { background: var(--accent); flex: 1 1 auto; min-height: 0; }
   .seg-interest { background: var(--gold); flex: 0 0 auto; border-bottom: 2px solid var(--surface); }
@@ -194,6 +195,20 @@
   .bar.forecast .seg-saved { background: repeating-linear-gradient(135deg, var(--accent) 0 5px, var(--accent-soft) 5px 9px); }
   .bar.forecast .seg-interest { background: repeating-linear-gradient(135deg, var(--gold) 0 5px, var(--gold-soft) 5px 9px); }
   .bar-labels span.forecast { font-weight: 600; }
+  .bar-labels span.today-divider { flex: 0 0 0; }
+  .bar-tip {
+    position: fixed; z-index: 40; pointer-events: none; transform: translate(-50%, -100%);
+    background: var(--text); color: var(--bg); border-radius: 10px; padding: 8px 10px;
+    font-size: 12.5px; line-height: 1.45; white-space: nowrap; box-shadow: var(--shadow);
+  }
+  .bar-tip::after {
+    content: ""; position: absolute; left: 50%; bottom: -5px; margin-left: -5px;
+    border: 5px solid transparent; border-bottom: 0; border-top-color: var(--text);
+  }
+  .bar-tip[hidden] { display: none; }
+  .bar-tip .tip-head { font-weight: 800; opacity: .75; }
+  .bar-tip .tip-row { display: flex; justify-content: space-between; gap: 14px; }
+  .bar-tip .tip-row b { font-variant-numeric: tabular-nums; }
   .today-divider { flex: 0 0 0; align-self: stretch; border-left: 2px dashed var(--border); margin: 0 -1px; }
   .legend i.striped { background: repeating-linear-gradient(135deg, var(--accent) 0 3px, var(--accent-soft) 3px 5px); }
   .legend { display: flex; gap: 16px; justify-content: center; margin-top: 12px; font-size: 12.5px; font-weight: 700; color: var(--muted); }
@@ -328,6 +343,8 @@
     </main>
   </div>
 
+  <div class="bar-tip" id="bar-tip" role="tooltip" hidden></div>
+
   <div class="sheet-backdrop" id="sheet-backdrop" data-action="sheet-backdrop" hidden>
     <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
   </div>
@@ -359,7 +376,7 @@
   "use strict";
 
   var STORAGE_KEY = "sparapp_tablet_v1";
-  var APP_VERSION = "10";
+  var APP_VERSION = "11";
   var TITLES = { balance: "Kontostand", add: "Buchen", history: "Verlauf", settings: "Eltern-Zugang" };
   var TYPE_LABEL = {
     initial: "Startguthaben",
@@ -825,7 +842,7 @@
         bars += '<span class="today-divider" aria-hidden="true"></span>';
         labels += '<span class="today-divider" aria-hidden="true"></span>';
       }
-      bars += '<button class="bar' + sel + fc + '" data-action="select-week" data-week="' + b.key + '" style="--h:' + h.toFixed(1) + '%" aria-label="' + (b.forecast ? "Vorschau " : "") + 'Woche ab ' + formatDate(b.key) + ': ' + formatAmount(b.balance) + '">' +
+      bars += '<button class="bar' + sel + fc + '" data-action="select-week" data-week="' + b.key + '" data-balance="' + b.balance + '" data-interest="' + b.interest + '" data-itotal="' + b.interestTotal + '" style="--h:' + h.toFixed(1) + '%" aria-label="' + (b.forecast ? "Vorschau " : "") + 'Woche ab ' + formatDate(b.key) + ': ' + formatAmount(b.balance) + '">' +
           '<span class="bar-value">' + (b.forecast ? "≈ " : "") + formatNumber(b.balance) + '</span>' +
           '<span class="bar-stack">' +
             (interestPart > 0 ? '<span class="seg-interest" style="height:' + (interestPart * 100).toFixed(1) + '%"></span>' : "") +
@@ -1199,6 +1216,29 @@
   document.addEventListener("change", function (e) {
     if (e.target.id === "ob-mode") el("ob-percent-group").hidden = (e.target.value === "fixed");
   });
+
+  // ---------- Tooltip für die Säulen (nur Maus; auf dem Tablet reicht Antippen) ----------
+  function showBarTip(bar) {
+    var tip = el("bar-tip"), fc = bar.classList.contains("forecast"), approx = fc ? "≈ " : "";
+    var interest = parseFloat(bar.dataset.interest) || 0;
+    tip.innerHTML =
+      '<div class="tip-head">' + formatDateWeekday(bar.dataset.week) + (fc ? " · Vorschau" : "") + '</div>' +
+      '<div class="tip-row"><span>Guthaben</span><b>' + approx + formatAmount(parseFloat(bar.dataset.balance)) + '</b></div>' +
+      (interest > 0 ? '<div class="tip-row"><span>Zinsen diese Woche</span><b>+' + formatNumber(interest) + '</b></div>' : '') +
+      '<div class="tip-row"><span>Zinsen gesamt</span><b>' + approx + formatNumber(parseFloat(bar.dataset.itotal) || 0) + '</b></div>';
+    var stack = bar.querySelector(".bar-stack").getBoundingClientRect();
+    tip.style.left = (stack.left + stack.width / 2) + "px";
+    tip.style.top = (stack.top - 10) + "px";
+    tip.hidden = false;
+  }
+  function hideBarTip() { var tip = el("bar-tip"); if (tip) tip.hidden = true; }
+  document.addEventListener("pointerover", function (e) {
+    if (e.pointerType !== "mouse") return;
+    var bar = e.target.closest && e.target.closest("#bars .bar");
+    if (bar) showBarTip(bar); else hideBarTip();
+  });
+  document.addEventListener("scroll", hideBarTip, true);
+  document.addEventListener("click", hideBarTip, true);
 
   // ---------- boot ----------
   async function boot() {
