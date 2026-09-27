@@ -376,7 +376,7 @@
   "use strict";
 
   var STORAGE_KEY = "sparapp_tablet_v1";
-  var APP_VERSION = "11";
+  var APP_VERSION = "12";
   var TITLES = { balance: "Kontostand", add: "Buchen", history: "Verlauf", settings: "Eltern-Zugang" };
   var TYPE_LABEL = {
     initial: "Startguthaben",
@@ -842,7 +842,7 @@
         bars += '<span class="today-divider" aria-hidden="true"></span>';
         labels += '<span class="today-divider" aria-hidden="true"></span>';
       }
-      bars += '<button class="bar' + sel + fc + '" data-action="select-week" data-week="' + b.key + '" data-balance="' + b.balance + '" data-interest="' + b.interest + '" data-itotal="' + b.interestTotal + '" style="--h:' + h.toFixed(1) + '%" aria-label="' + (b.forecast ? "Vorschau " : "") + 'Woche ab ' + formatDate(b.key) + ': ' + formatAmount(b.balance) + '">' +
+      bars += '<button class="bar' + sel + fc + '" data-action="select-week" data-week="' + b.key + '" data-balance="' + b.balance + '" data-interest="' + b.interest + '" data-itotal="' + b.interestTotal + '"' + (b.current ? ' data-current="1"' : '') + ' style="--h:' + h.toFixed(1) + '%" aria-label="' + (b.forecast ? "Vorschau " : "") + 'Woche ab ' + formatDate(b.key) + ': ' + formatAmount(b.balance) + '">' +
           '<span class="bar-value">' + (b.forecast ? "≈ " : "") + formatNumber(b.balance) + '</span>' +
           '<span class="bar-stack">' +
             (interestPart > 0 ? '<span class="seg-interest" style="height:' + (interestPart * 100).toFixed(1) + '%"></span>' : "") +
@@ -852,12 +852,9 @@
       labels += '<span class="' + (sel + fc).trim() + '" data-label="' + b.key + '">' + d.getDate() + '.' + (d.getMonth() + 1) + '.</span>';
     });
     var idx = buckets.findIndex(function (b) { return b.key === selectedWeek; });
-    var saved = round2(last.balance - last.interestTotal);
+    var selB = buckets[idx];
     return '<div class="chart-title">So ist dein Geld gewachsen</div>' +
-      '<div class="chart-summary">' +
-        '<div class="sum-chip saved"><div class="sum-label">Selbst gespart</div><div class="sum-value">' + formatNumber(saved) + '</div></div>' +
-        '<div class="sum-chip interest"><div class="sum-label">Von Zinsen geschenkt</div><div class="sum-value">' + formatNumber(last.interestTotal) + '</div></div>' +
-      '</div>' +
+      '<div class="chart-summary" id="chart-summary">' + summaryHTML(selB.key, selB.balance, selB.interestTotal, selB.forecast, selB.current) + '</div>' +
       '<div class="forecast-row"><span class="forecast-label">Blick in die Zukunft</span>' +
         '<div class="segmented" role="group" aria-label="Vorschau">' +
           [[0, "Aus"], [4, "4 Wochen"], [13, "3 Monate"], [52, "1 Jahr"]].map(function (o) {
@@ -873,6 +870,22 @@
       '<div class="week-info" id="week-info">' + weekInfoHTML(buckets, idx) + '</div>';
   }
 
+  // Summen oben: Stand am Ende der gewählten (oder gerade überfahrenen) Woche.
+  function summaryHTML(key, balance, interestTotal, forecast, current) {
+    var approx = forecast ? "≈ " : "";
+    var until = current ? "" : " bis " + formatDateWeekday(toISO(addDays(parseISO(key), 6)));
+    return '<div class="sum-chip saved"><div class="sum-label">' + (current ? "Selbst gespart" : "Gespart" + until) + '</div>' +
+        '<div class="sum-value">' + approx + formatNumber(round2(balance - interestTotal)) + '</div></div>' +
+      '<div class="sum-chip interest"><div class="sum-label">' + (current ? "Von Zinsen geschenkt" : "Zinsen" + until) + '</div>' +
+        '<div class="sum-value">' + approx + formatNumber(interestTotal) + '</div></div>';
+  }
+  function showSummaryForBar(bar) {
+    var box = el("chart-summary");
+    if (!box || !bar) return;
+    box.innerHTML = summaryHTML(bar.dataset.week, parseFloat(bar.dataset.balance), parseFloat(bar.dataset.itotal) || 0,
+      bar.classList.contains("forecast"), bar.dataset.current === "1");
+  }
+
   function selectWeek(key) {
     var buckets = allBuckets();
     var idx = buckets.findIndex(function (b) { return b.key === key; });
@@ -881,6 +894,7 @@
     Array.prototype.forEach.call(document.querySelectorAll("#bars .bar"), function (n) { n.classList.toggle("selected", n.dataset.week === key); });
     Array.prototype.forEach.call(document.querySelectorAll(".bar-labels span"), function (n) { n.classList.toggle("selected", n.dataset.label === key); });
     el("week-info").innerHTML = weekInfoHTML(buckets, idx);
+    showSummaryForBar(document.querySelector("#bars .bar.selected"));
     scrollBarIntoView(key, true);
   }
 
@@ -1235,7 +1249,8 @@
   document.addEventListener("pointerover", function (e) {
     if (e.pointerType !== "mouse") return;
     var bar = e.target.closest && e.target.closest("#bars .bar");
-    if (bar) showBarTip(bar); else hideBarTip();
+    if (bar) { showBarTip(bar); showSummaryForBar(bar); }
+    else if (el("bar-tip") && !el("bar-tip").hidden) { hideBarTip(); showSummaryForBar(document.querySelector("#bars .bar.selected")); }
   });
   document.addEventListener("scroll", hideBarTip, true);
   document.addEventListener("click", hideBarTip, true);
