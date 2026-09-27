@@ -120,6 +120,7 @@
     text-align: center; font-family: "Baloo 2", sans-serif; font-size: 40px; font-weight: 700;
     min-height: 72px; border-radius: 16px;
   }
+  .date-hint { font-size: 13px; font-weight: 700; margin-top: 6px; min-height: 18px; }
   .toast { text-align: center; font-size: 13.5px; font-weight: 700; color: var(--accent); min-height: 18px; }
 
   /* --- History view --- */
@@ -317,7 +318,7 @@
   "use strict";
 
   var STORAGE_KEY = "sparapp_tablet_v1";
-  var APP_VERSION = "5";
+  var APP_VERSION = "6";
   var TITLES = { balance: "Kontostand", add: "Buchen", history: "Verlauf", settings: "Eltern-Zugang" };
   var TYPE_LABEL = {
     initial: "Startguthaben",
@@ -336,6 +337,7 @@
   var pinError = false;
   var isDeposit = true;
   var addAmountValue = "";
+  var addDateValue = "";   // leer = heute
   var justBooked = false;
   var showResetConfirm = false;
   var savedToast = false;
@@ -427,10 +429,10 @@
     catchUp();
   }
 
-  function addManualTransaction(amount, deposit) {
+  function addManualTransaction(amount, deposit, dateISO) {
     var a = round2(Math.abs(amount));
     if (a <= 0) return;
-    state.transactions.push({ id: uid(), type: deposit ? "deposit" : "withdrawal", amount: a, date: toISO(new Date()) });
+    state.transactions.push({ id: uid(), type: deposit ? "deposit" : "withdrawal", amount: a, date: clampBookingDate(dateISO) });
     saveState();
   }
 
@@ -517,6 +519,13 @@
       '</div>';
   }
 
+  // Nachträgliche Buchungen: frühestens am Startdatum, höchstens heute.
+  function clampBookingDate(iso) {
+    var today = toISO(new Date()), min = state.settings.startDate;
+    if (!iso || iso > today) return today;
+    return iso < min ? min : iso;
+  }
+
   function renderAdd() {
     el("add-view").innerHTML =
       '<div class="direction-row">' +
@@ -526,6 +535,9 @@
       '<div class="card amount-input-wrap">' +
         '<div class="field-label" style="margin-bottom:10px;">Betrag (' + state.settings.currencySymbol + ')</div>' +
         '<input type="number" id="add-amount-input" min="0" step="0.5" inputmode="decimal" placeholder="0" value="' + addAmountValue + '">' +
+        '<div class="field-label" style="margin:16px 0 10px;">Datum</div>' +
+        '<input type="date" id="add-date-input" min="' + state.settings.startDate + '" max="' + toISO(new Date()) + '" value="' + clampBookingDate(addDateValue) + '">' +
+        '<div class="date-hint muted" id="add-date-hint"></div>' +
       '</div>' +
       '<button class="btn btn-block ' + (isDeposit ? "btn-primary" : "btn-danger-solid") + '" id="submit-tx-btn" data-action="submit-transaction">' + (isDeposit ? "Einzahlen" : "Ausgeben") + '</button>' +
       '<div class="toast">' + (justBooked ? "Gebucht ✓" : "") + '</div>';
@@ -533,6 +545,13 @@
     var btn = el("submit-tx-btn");
     function sync() { btn.disabled = !(parseFloat(input.value) > 0); }
     input.addEventListener("input", function () { addAmountValue = input.value; sync(); });
+    var dateInput = el("add-date-input");
+    function syncDate() {
+      var iso = clampBookingDate(dateInput.value);
+      el("add-date-hint").textContent = iso === toISO(new Date()) ? "Heute" : "Nachträglich für " + formatDateWeekday(iso);
+    }
+    dateInput.addEventListener("change", function () { addDateValue = dateInput.value; syncDate(); });
+    syncDate();
     sync();
   }
 
@@ -811,8 +830,9 @@
     else if (action === "submit-transaction") {
       var amt = parseFloat(addAmountValue) || 0;
       if (amt > 0) {
-        addManualTransaction(amt, isDeposit);
+        addManualTransaction(amt, isDeposit, addDateValue);
         addAmountValue = "";
+        addDateValue = "";
         justBooked = true;
         refreshUI();
         setTimeout(function () { justBooked = false; refreshUI(); }, 1500);
