@@ -207,6 +207,18 @@
         <div class="field-label">Wöchentlicher Betrag (Credits)</div>
         <input type="number" id="ob-weekly" min="0" step="1" value="1">
       </div>
+      <div>
+        <div class="field-label">Zins-Modus</div>
+        <select id="ob-mode">
+          <option value="fixed">Nur Fixbetrag</option>
+          <option value="percentage">Nur Prozent</option>
+          <option value="combined" selected>Fixbetrag + Prozent</option>
+        </select>
+      </div>
+      <div id="ob-percent-group">
+        <div class="field-label">Zins % / Woche</div>
+        <input type="number" id="ob-percent" min="0" step="0.5" value="1">
+      </div>
       <button class="btn btn-primary btn-block" data-action="onboarding-submit">Los geht's</button>
       <p class="footnote">Alle Daten bleiben nur auf diesem Tablet gespeichert.</p>
     </div>
@@ -345,11 +357,11 @@
     return s.lastAutoBookingDate ? addDays(parseISO(s.lastAutoBookingDate), 7) : nextWeekdayOnOrAfter(parseISO(s.startDate), s.bookingWeekday);
   }
 
-  function completeOnboarding(startBalance, startDateISO, weeklyAmount) {
+  function completeOnboarding(startBalance, startDateISO, weeklyAmount, interestMode, interestPercent) {
     state.settings = {
       weeklyFixedAmount: round2(Math.max(0, weeklyAmount)),
-      weeklyInterestPercent: 0,
-      interestMode: "fixed",
+      weeklyInterestPercent: interestMode === "fixed" ? 0 : round2(Math.max(0, interestPercent)),
+      interestMode: interestMode,
       bookingWeekday: 6,
       startDate: startDateISO,
       lastAutoBookingDate: null,
@@ -601,7 +613,9 @@
       var bal = parseFloat(el("ob-balance").value) || 0;
       var date = el("ob-date").value || toISO(lastWeekdayOnOrBefore(new Date(), 6));
       var weekly = parseFloat(el("ob-weekly").value) || 0;
-      completeOnboarding(bal, date, weekly);
+      var mode = el("ob-mode").value;
+      var percent = parseFloat(el("ob-percent").value) || 0;
+      completeOnboarding(bal, date, weekly, mode, percent);
       activeTab = "balance";
       refreshUI();
     }
@@ -626,6 +640,10 @@
       refreshUI();
     }
     else if (action === "settings-done") { settingsUnlocked = false; pinMode = "verify"; pinBuffer = ""; refreshUI(); }
+  });
+
+  document.addEventListener("change", function (e) {
+    if (e.target.id === "ob-mode") el("ob-percent-group").hidden = (e.target.value === "fixed");
   });
 
   // ---------- boot ----------
