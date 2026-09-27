@@ -322,7 +322,7 @@
       <div id="ob-percent-group">
         <div class="field-label">Zins % / Monat</div>
         <input type="number" id="ob-percent" min="0" step="0.5" value="5">
-        <div class="date-hint muted">Zinsen gibt es immer am 1. des Monats.</div>
+        <div class="date-hint muted">Zinsen gibt es immer am 1. des Monats, aufgerundet auf 0,5.</div>
       </div>
       <button class="btn btn-primary btn-block" data-action="onboarding-submit">Los geht's</button>
       <p class="footnote">Alle Daten bleiben nur auf diesem Tablet gespeichert. · Version <span class="app-version"></span></p>
@@ -376,7 +376,7 @@
   "use strict";
 
   var STORAGE_KEY = "sparapp_tablet_v1";
-  var APP_VERSION = "12";
+  var APP_VERSION = "13";
   var TITLES = { balance: "Kontostand", add: "Buchen", history: "Verlauf", settings: "Eltern-Zugang" };
   var TYPE_LABEL = {
     initial: "Startguthaben",
@@ -513,13 +513,19 @@
   }
 
   // Nach Änderungen an früheren Buchungen: Zinsbuchungen ab fromISO mit dem damaligen Satz neu berechnen.
+  // Zinsen am Zinstag immer auf den nächsten halben Betrag aufrunden (1,26 → 1,5; 1,76 → 2).
+  function monthlyInterestAmount(balance, rate) {
+    var exact = round2(Math.max(0, balance) * rate / 100);
+    return exact > 0 ? Math.ceil(exact * 2) / 2 : 0;
+  }
+
   // Monatszinsen zählen das Guthaben vor dem Zinstag (Monatsende), alte Wochenzinsen das Guthaben direkt davor.
   function recalcInterestFrom(fromISO) {
     var balance = 0, day = null, dayStart = 0;
     chronological().forEach(function (t) {
       if (t.date !== day) { day = t.date; dayStart = balance; }
       if (t.date >= fromISO) {
-        if (t.type === "monthlyInterest") t.amount = round2(Math.max(0, dayStart) * t.rate / 100);
+        if (t.type === "monthlyInterest") t.amount = monthlyInterestAmount(dayStart, t.rate);
         else if (t.type === "weeklyInterest" && t.rate !== undefined) t.amount = round2(Math.max(0, balance) * t.rate / 100);
       }
       balance = round2(balance + signedAmount(t));
@@ -545,7 +551,7 @@
       for (var m = rule.nextInterest; m <= endDate; m = firstOfNextMonth(m)) ev.push({ date: m, kind: "interest" });
     ev.sort(function (a, b) { return a.date - b.date || (a.kind === "interest" ? -1 : 1); });
     ev.forEach(function (e) {
-      e.amount = e.kind === "base" ? rule.fixed : round2(Math.max(0, balance) * rule.pct / 100);
+      e.amount = e.kind === "base" ? rule.fixed : monthlyInterestAmount(balance, rule.pct);
       balance = round2(balance + e.amount);
       e.balance = balance;
     });
@@ -628,10 +634,11 @@
       text = "Jeden Samstag kommt derselbe Betrag dazu. Das Guthaben wächst gleichmäßig.";
       example = f(base) + " + " + f(fixed) + " = <b>" + f(round2(base + fixed)) + "</b>";
     } else {
-      var i = round2(base * percent / 100);
+      var exact = round2(Math.max(0, base) * percent / 100), i = monthlyInterestAmount(base, percent);
       text = (mode === "percentage" ? "Es gibt kein festes Taschengeld. " : "Jeden Samstag kommt der Fixbetrag dazu. ") +
-        "Am 1. jedes Monats ist Zinstag: Dann gibt es Zinsen auf das Guthaben vom Monatsende. Weil die Zinsen danach mitverzinst werden, wächst das Guthaben mit der Zeit immer schneller (Zinseszins).";
-      example = "Wenn am Monatsende " + f(base) + " auf dem Konto sind: " + formatNumber(percent) + " % = <b>" + f(i) + " Zinsen</b>";
+        "Am 1. jedes Monats ist Zinstag: Dann gibt es Zinsen auf das Guthaben vom Monatsende. Krumme Beträge werden auf die nächste 0,5 aufgerundet. Weil die Zinsen danach mitverzinst werden, wächst das Guthaben mit der Zeit immer schneller (Zinseszins).";
+      example = "Wenn am Monatsende " + f(base) + " auf dem Konto sind: " + formatNumber(percent) + " % = " + formatNumber(exact) +
+        (exact !== i ? ", aufgerundet" : "") + " → <b>" + f(i) + " Zinsen</b>";
     }
     var rule = { mode: mode, fixed: fixed, pct: percent, nextBase: nextBookingDate(), nextInterest: nextInterestDate() };
     var year = simulateEvents(base, rule, addDays(startOfDay(new Date()), 365));
@@ -1261,6 +1268,10 @@
     state = loadState() || { transactions: [], settings: null, pinHash: null };
     if (!state.pinHash) { state.pinHash = await sha256Hex("0000"); saveState(); }
     migrateSettings();
+    if (state.settings) {
+      var oddInterest = chronological().filter(function (t) { return t.type === "monthlyInterest" && t.amount * 2 !== Math.ceil(t.amount * 2); })[0];
+      if (oddInterest) { recalcInterestFrom(oddInterest.date); saveState(); }
+    }
     if (state.settings) catchUp();
     refreshUI();
   }
