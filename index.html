@@ -411,7 +411,7 @@
   "use strict";
 
   var STORAGE_KEY = "sparapp_tablet_v1";
-  var APP_VERSION = "16";
+  var APP_VERSION = "17";
   var TITLES = { balance: "Kontostand", add: "Buchen", history: "Verlauf", settings: "Eltern-Zugang" };
   var TYPE_LABEL = {
     initial: "Startguthaben",
@@ -447,14 +447,57 @@
   var chartType = "bars";    // bars | curve | donut
 
   // ---------- storage ----------
-  function loadState() {
-    try {
-      var raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch (e) { return null; }
+  // Doppelt speichern: localStorage und IndexedDB. Manche Kinder-Browser sperren einen der beiden
+  // oder leeren ihn beim Schließen; beim Laden gewinnt der neuere Stand.
+  var storageInfo = { local: false, idb: false, persisted: null };
+  var idbPromise = null;
+  function idb() {
+    if (!idbPromise) idbPromise = new Promise(function (resolve, reject) {
+      try {
+        var req = indexedDB.open("sparkonto", 1);
+        req.onupgradeneeded = function () { req.result.createObjectStore("kv"); };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { reject(req.error); };
+      } catch (e) { reject(e); }
+    });
+    return idbPromise;
+  }
+  function idbRequest(mode, fn) {
+    return idb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction("kv", mode), r = fn(tx.objectStore("kv"));
+        tx.oncomplete = function () { resolve(r.result); };
+        tx.onerror = function () { reject(tx.error); };
+      });
+    });
+  }
+  async function checkStorage() {
+    try { localStorage.setItem("__probe", "1"); storageInfo.local = localStorage.getItem("__probe") === "1"; localStorage.removeItem("__probe"); }
+    catch (e) { storageInfo.local = false; }
+    try { await idbRequest("readwrite", function (st) { return st.put("1", "__probe"); }); storageInfo.idb = (await idbRequest("readonly", function (st) { return st.get("__probe"); })) === "1"; }
+    catch (e) { storageInfo.idb = false; }
+    try { if (navigator.storage && navigator.storage.persist) storageInfo.persisted = await navigator.storage.persist(); }
+    catch (e) { storageInfo.persisted = null; }
+  }
+  async function loadState() {
+    var fromLocal = null, fromIdb = null;
+    try { var raw = localStorage.getItem(STORAGE_KEY); fromLocal = raw ? JSON.parse(raw) : null; } catch (e) {}
+    try { var raw2 = await idbRequest("readonly", function (st) { return st.get(STORAGE_KEY); }); fromIdb = raw2 ? JSON.parse(raw2) : null; } catch (e) {}
+    if (fromLocal && fromIdb) return (fromIdb.savedAt || "") > (fromLocal.savedAt || "") ? fromIdb : fromLocal;
+    return fromLocal || fromIdb;
   }
   function saveState() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+    state.savedAt = new Date().toISOString();
+    if (!state.createdAt) state.createdAt = state.savedAt;
+    var raw = JSON.stringify(state);
+    try { localStorage.setItem(STORAGE_KEY, raw); } catch (e) {}
+    idbRequest("readwrite", function (st) { return st.put(raw, STORAGE_KEY); }).catch(function () {});
+  }
+  function storageStatusHTML() {
+    var ok = function (v) { return v ? "✓" : "✗"; };
+    return "Speicher: Browser " + ok(storageInfo.local) + " · Datenbank " + ok(storageInfo.idb) +
+      " · dauerhaft " + (storageInfo.persisted === null ? "?" : ok(storageInfo.persisted)) +
+      (state.createdAt ? "<br>Daten angelegt am " + formatDate(state.createdAt.slice(0, 10)) + ", " + new Date(state.createdAt).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "");
   }
   async function sha256Hex(str) {
     var enc = new TextEncoder().encode(str);
@@ -629,6 +672,7 @@
   function resetAll() {
     state.transactions = [];
     state.settings = null;
+    state.createdAt = null;
     saveState();
   }
 
@@ -1310,7 +1354,7 @@
           '<button class="btn btn-danger btn-block" style="margin-top:12px;" data-action="reset-open">Von vorne beginnen…</button>') +
       '</div>' +
       '<button class="btn btn-ghost btn-block" data-action="settings-done">Fertig</button>' +
-      '<p class="footnote">Daten werden nur lokal auf diesem Tablet gespeichert (kein Cloud-Abgleich). · Version ' + APP_VERSION + '</p>' +
+      '<p class="footnote">Daten werden nur lokal auf diesem Tablet gespeichert (kein Cloud-Abgleich). · Version ' + APP_VERSION + '<br>' + storageStatusHTML() + '</p>' +
       '</div>';
 
     el("set-mode").addEventListener("change", function (e) {
@@ -1463,8 +1507,10 @@
   // ---------- boot ----------
   async function boot() {
     Array.prototype.forEach.call(document.querySelectorAll(".app-version"), function (n) { n.textContent = APP_VERSION; });
-    state = loadState() || { transactions: [], settings: null, pinHash: null };
-    if (!state.pinHash) { state.pinHash = await sha256Hex("0000"); saveState(); }
+    await checkStorage();
+    state = (await loadState()) || { transactions: [], settings: null, pinHash: null };
+    if (!state.pinHash) state.pinHash = await sha256Hex("0000");
+    saveState();   // beide Speicherorte wieder auf denselben Stand bringen
     migrateSettings();
     if (state.settings) {
       var oddInterest = chronological().filter(function (t) { return t.type === "monthlyInterest" && t.amount * 2 !== Math.ceil(t.amount * 2); })[0];
